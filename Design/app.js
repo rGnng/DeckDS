@@ -116,9 +116,16 @@
     playFocusRow: 2,
     playFocusCol: 1, // starts on hero Play/Pause
     listFocusIdx: 0,
-    minusOneOpen: false, // -1 viewport utility bar (count + album view + order / new playlist)
+    minusOneOpen: false, // -1 viewport utility bar (count + search + play/shuffle + album view + order / new playlist)
     inMinusOne: false,
     minusOneFocusIdx: 0,
+    searchOpen: false,
+    searchQuery: '',
+    oskOpen: false,
+    oskTargetId: null,
+    oskMode: 'abc',
+    oskRow: 0,
+    oskCol: 0,
     detailFocusIdx: 0,   // -3 = Shuffle Play, -2 = Play, -1 = Queue, 0..N = track rows
     queueFocusIdx: 0,
     settingsFocusRow: 0, // 0=Brightness, 1=Theme, 2=Lid, 3=SFX, 4=TopDisplay
@@ -706,6 +713,11 @@
     state.listFocusIdx = 0;
     state.minusOneOpen = false;
     state.inMinusOne = false;
+    state.searchOpen = false;
+    state.searchQuery = '';
+    closeOsk(false);
+    const searchInput = $c('#catSearchInput');
+    if (searchInput) { searchInput.value = ''; searchInput.blur(); }
     state.queueFocusIdx = 0;
     $c('#libItems').scrollTop = 0;
 
@@ -1511,6 +1523,7 @@
 
   function closeAllSheets(playBackSfx = false) {
     const wasOpen = activeSheetType() !== null;
+    closeOsk(false);
     $c('#trackActionSheet').hidden = true;
     $c('#playlistPickerSheet').hidden = true;
     $c('#sortOrderSheet').hidden = true;
@@ -1650,21 +1663,60 @@
   const scrubberPopupHeroEl = $c('#scrubberPopupHero');
   const scrubberPopupSubEl = $c('#scrubberPopupSub');
 
+  const queueListEl = $c('#queueList');
+  const queueScrubberEl = $c('#queueScrubber');
+  const queueScrubberTicksEl = $c('#queueScrubberTicks');
+  const queueScrubberThumbEl = $c('#queueScrubberThumb');
+  const queueScrubberPopupEl = $c('#queueScrubberPopup');
+  const queueScrubberPopupHeroEl = $c('#queueScrubberPopupHero');
+  const queueScrubberPopupSubEl = $c('#queueScrubberPopupSub');
+
   let activeVirtualRender = null;
   let lastScrubHero = '';
   let lastScrubSfxTs = 0;
   let popupHideTimer = null;
+  let queuePopupHideTimer = null;
+  let lastQueueScrubHero = '';
+
+  function setThumbTransform(thumbEl, px) {
+    thumbEl.style.transform = `translate3d(0, ${px.toFixed(2)}px, 0)`;
+  }
+
+  function syncScrollbarVisual(scrollEl, railEl, thumbEl, knownTotalH = 0) {
+    if (!scrollEl || !railEl || !thumbEl || railEl.hidden) return;
+    const viewH = scrollEl.clientHeight || 1;
+    const contentH = knownTotalH > 0 ? Math.max(knownTotalH, scrollEl.scrollHeight) : scrollEl.scrollHeight;
+    const maxScroll = Math.max(0, contentH - viewH);
+    const trackH = Math.max(1, railEl.clientHeight - 20 - 44);
+    thumbEl.style.opacity = maxScroll > 0 ? '1' : '0.35';
+    const ratio = maxScroll > 0 ? Math.max(0, Math.min(1, scrollEl.scrollTop / maxScroll)) : 0;
+    setThumbTransform(thumbEl, ratio * trackH);
+  }
+
+  function renderNumericTicks(ticksEl, n) {
+    ticksEl.innerHTML = '';
+    if (n <= 0) return;
+    const marks = n >= 10
+      ? ['1', Math.round(n * 0.25), Math.round(n * 0.5), Math.round(n * 0.75), String(n)]
+      : n > 1
+        ? ['1', String(n)]
+        : ['1'];
+    marks.forEach((m) => {
+      const sp = document.createElement('span');
+      sp.textContent = Number(m) >= 1000 ? `${(Number(m) / 1000).toFixed(1)}k` : String(m);
+      ticksEl.appendChild(sp);
+    });
+  }
 
   function configureSmartScrubber(category, items, sortMeta, totalHeight) {
-    if (!items.length) {
-      smartScrubberEl.hidden = true;
-      state.activeScrubContext = null;
-      return;
-    }
     smartScrubberEl.hidden = false;
     state.activeScrubContext = { category, items, sortMeta, totalHeight };
 
     scrubberTicksEl.innerHTML = '';
+    if (!items.length) {
+      requestAnimationFrame(syncScrubberThumbFromScroll);
+      return;
+    }
     if (sortMeta.mode === 'alpha') {
       const letters = sortMeta.dir === 'desc'
         ? ['Z', 'V', 'S', 'P', 'M', 'J', 'G', 'D', 'A']
@@ -1682,29 +1734,27 @@
         scrubberTicksEl.appendChild(sp);
       });
     } else {
-      const n = items.length;
-      const marks = n >= 10
-        ? ['1', Math.round(n * 0.25), Math.round(n * 0.5), Math.round(n * 0.75), String(n)]
-        : ['1', String(n)];
-      marks.forEach((m) => {
-        const sp = document.createElement('span');
-        sp.textContent = Number(m) >= 1000 ? `${(Number(m) / 1000).toFixed(1)}k` : String(m);
-        scrubberTicksEl.appendChild(sp);
-      });
+      renderNumericTicks(scrubberTicksEl, items.length);
     }
     syncScrubberThumbFromScroll();
-  }
-
-  function setScrubberThumbOffset(px) {
-    scrubberThumbEl.style.transform = `translate3d(0, ${px.toFixed(2)}px, 0)`;
+    requestAnimationFrame(syncScrubberThumbFromScroll);
   }
 
   function syncScrubberThumbFromScroll() {
-    if (smartScrubberEl.hidden) return;
-    const maxScroll = Math.max(1, libItemsEl.scrollHeight - libItemsEl.clientHeight);
-    const ratio = Math.max(0, Math.min(1, libItemsEl.scrollTop / maxScroll));
-    const trackH = Math.max(1, smartScrubberEl.clientHeight - 20 - 44);
-    setScrubberThumbOffset(ratio * trackH);
+    const knownH = (state.activeScrubContext && state.activeScrubContext.sortMeta.mode !== 'scroll')
+      ? (state.activeScrubContext.totalHeight || 0)
+      : 0;
+    syncScrollbarVisual(libItemsEl, smartScrubberEl, scrubberThumbEl, knownH);
+  }
+
+  function syncQueueScrubberThumb() {
+    syncScrollbarVisual(queueListEl, queueScrubberEl, queueScrubberThumbEl, 0);
+  }
+
+  function configureQueueScrubber() {
+    renderNumericTicks(queueScrubberTicksEl, state.queue.length);
+    syncQueueScrubberThumb();
+    requestAnimationFrame(syncQueueScrubberThumb);
   }
 
   const scrollAnims = new WeakMap();
@@ -1730,6 +1780,8 @@
       if (el === libItemsEl) {
         if (activeVirtualRender) activeVirtualRender(true);
         syncScrubberThumbFromScroll();
+      } else if (el === queueListEl) {
+        syncQueueScrubberThumb();
       }
       return;
     }
@@ -1741,6 +1793,8 @@
       if (el === libItemsEl) {
         if (activeVirtualRender) activeVirtualRender(false);
         syncScrubberThumbFromScroll();
+      } else if (el === queueListEl) {
+        syncQueueScrubberThumb();
       }
       if (p < 1) {
         scrollAnims.set(el, requestAnimationFrame(step));
@@ -1750,6 +1804,8 @@
         if (el === libItemsEl) {
           if (activeVirtualRender) activeVirtualRender(true);
           syncScrubberThumbFromScroll();
+        } else if (el === queueListEl) {
+          syncQueueScrubberThumb();
         }
       }
     };
@@ -1842,6 +1898,10 @@
       const item = items[targetIdx];
       heroText = String(item.year || '—');
       subText = `#${targetIdx + 1} / ${n} — ${item.title || item.name}`;
+    } else if (ctx.sortMeta.mode === 'scroll') {
+      const item = items[targetIdx];
+      heroText = String(targetIdx + 1);
+      subText = item ? `${item.title || item.name || ''}` : '';
     } else {
       const item = items[targetIdx];
       heroText = String(targetIdx + 1);
@@ -1853,20 +1913,25 @@
       }
     }
 
-    state.listFocusIdx = targetIdx;
     cancelSmoothScroll(libItemsEl);
-    const trackH = Math.max(1, smartScrubberEl.clientHeight - 20 - 44);
-    setScrubberThumbOffset(norm * trackH);
-
     const maxScroll = Math.max(0, libItemsEl.scrollHeight - libItemsEl.clientHeight);
-    if (ctx.category === 'albums') {
-      const { cols, rowH } = getAlbumsLayout();
-      libItemsEl.scrollTop = Math.min(maxScroll, Math.floor(targetIdx / cols) * rowH);
+    const trackH = Math.max(1, smartScrubberEl.clientHeight - 20 - 44);
+    scrubberThumbEl.style.opacity = maxScroll > 0 ? '1' : '0.35';
+    setThumbTransform(scrubberThumbEl, maxScroll > 0 ? norm * trackH : 0);
+
+    if (ctx.sortMeta.mode === 'scroll') {
+      libItemsEl.scrollTop = norm * maxScroll;
     } else {
-      const rowH = ctx.category === 'tracks' ? 128 : 108;
-      libItemsEl.scrollTop = Math.min(maxScroll, targetIdx * rowH);
+      state.listFocusIdx = targetIdx;
+      if (ctx.category === 'albums') {
+        const { cols, rowH } = getAlbumsLayout();
+        libItemsEl.scrollTop = Math.min(maxScroll, Math.floor(targetIdx / cols) * rowH);
+      } else {
+        const rowH = ctx.category === 'tracks' ? 128 : 108;
+        libItemsEl.scrollTop = Math.min(maxScroll, targetIdx * rowH);
+      }
+      if (activeVirtualRender) activeVirtualRender(true);
     }
-    if (activeVirtualRender) activeVirtualRender(true);
 
     scrubberPopupHeroEl.textContent = heroText;
     scrubberPopupSubEl.textContent = subText;
@@ -1880,6 +1945,56 @@
       sfx('tick');
     }
   }
+
+  function handleQueueScrub(clientY) {
+    const n = state.queue.length;
+    if (!n) return;
+    const rect = queueScrubberEl.getBoundingClientRect();
+    const norm = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    const maxScroll = Math.max(0, queueListEl.scrollHeight - queueListEl.clientHeight);
+    cancelSmoothScroll(queueListEl);
+    const trackH = Math.max(1, queueScrubberEl.clientHeight - 20 - 44);
+    queueScrubberThumbEl.style.opacity = maxScroll > 0 ? '1' : '0.35';
+    setThumbTransform(queueScrubberThumbEl, maxScroll > 0 ? norm * trackH : 0);
+    queueListEl.scrollTop = norm * maxScroll;
+
+    const targetIdx = Math.min(n - 1, Math.floor(norm * n));
+    const trk = getTrackById(state.queue[targetIdx]);
+    const heroText = String(targetIdx + 1);
+    queueScrubberPopupHeroEl.textContent = heroText;
+    queueScrubberPopupSubEl.textContent = trk ? trk.title : '';
+    queueScrubberPopupEl.hidden = false;
+    clearTimeout(queuePopupHideTimer);
+
+    const now = performance.now();
+    if (heroText !== lastQueueScrubHero && now - lastScrubSfxTs > 45) {
+      lastQueueScrubHero = heroText;
+      lastScrubSfxTs = now;
+      sfx('tick');
+    }
+  }
+
+  let scrubbingQueueRail = false;
+  queueScrubberEl.addEventListener('pointerdown', (e) => {
+    scrubbingQueueRail = true;
+    queueScrubberEl.classList.add('dragging');
+    queueScrubberEl.setPointerCapture(e.pointerId);
+    handleQueueScrub(e.clientY);
+  });
+  queueScrubberEl.addEventListener('pointermove', (e) => {
+    if (scrubbingQueueRail) handleQueueScrub(e.clientY);
+  });
+  const endQueueRailScrub = () => {
+    if (!scrubbingQueueRail) return;
+    scrubbingQueueRail = false;
+    queueScrubberEl.classList.remove('dragging');
+    queuePopupHideTimer = setTimeout(() => { queueScrubberPopupEl.hidden = true; }, 220);
+  };
+  queueScrubberEl.addEventListener('pointerup', endQueueRailScrub);
+  queueScrubberEl.addEventListener('pointercancel', endQueueRailScrub);
+  queueListEl.addEventListener('scroll', () => {
+    if (!scrubbingQueueRail) syncQueueScrubberThumb();
+  }, { passive: true });
 
   let scrubbingRail = false;
   smartScrubberEl.addEventListener('pointerdown', (e) => {
@@ -1900,9 +2015,17 @@
   smartScrubberEl.addEventListener('pointerup', endRailScrub);
   smartScrubberEl.addEventListener('pointercancel', endRailScrub);
 
+  function isSearchBarActive() {
+    return state.searchOpen || state.searchQuery.trim().length > 0 || (state.oskOpen && state.oskTargetId === 'catSearchInput');
+  }
+
   function getMinusOneControls() {
+    if (isSearchBarActive()) {
+      return [$c('#catSearchBar'), $c('#btnCatSearchClose')];
+    }
     if (state.tab === 'albums') {
       return [
+        $c('#catSearchBar'),
         $c('#btnCatShufflePlay'),
         $c('#btnCatPlayAll'),
         $c('#btnAlbumViewGrid'),
@@ -1910,8 +2033,267 @@
         $c('#btnOpenSortSheet'),
       ];
     }
-    if (state.tab === 'playlists') return [$c('#btnCatNewPlaylist')];
-    return [$c('#btnCatShufflePlay'), $c('#btnCatPlayAll'), $c('#btnOpenSortSheet')];
+    if (state.tab === 'playlists') return [$c('#catSearchBar'), $c('#btnCatNewPlaylist')];
+    return [$c('#catSearchBar'), $c('#btnCatShufflePlay'), $c('#btnCatPlayAll'), $c('#btnOpenSortSheet')];
+  }
+
+  function getDefaultMinusOneFocusIdx() {
+    const controls = getMinusOneControls();
+    const playIdx = controls.indexOf($c('#btnCatPlayAll'));
+    return playIdx >= 0 ? playIdx : 0;
+  }
+
+  /* ------------------------------------------------------------------------
+     ON-SCREEN TOUCH + D-PAD CURSOR VIRTUAL KEYPAD (DS / SWITCH STYLE)
+     ------------------------------------------------------------------------ */
+  const OSK_ROWS = {
+    abc: [
+      ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'].map((ch) => ({ label: ch, val: ch.toLowerCase(), span: 1 })),
+      [...'ASDFGHJKL'.split('').map((ch) => ({ label: ch, val: ch.toLowerCase(), span: 1 })), { label: '⌫', act: 'bksp', fn: true, span: 1 }],
+      [...'ZXCVBNM-.\''.split('').map((ch) => ({ label: ch, val: ch.toLowerCase(), span: 1 }))],
+      [
+        { label: '123', act: 'mode', fn: true, span: 2 },
+        { label: 'SPACE', act: 'space', fn: true, span: 4 },
+        { label: 'CLR', act: 'clear', fn: true, span: 2 },
+        { label: 'DONE', act: 'done', fn: true, done: true, span: 2 },
+      ],
+    ],
+    num: [
+      ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map((ch) => ({ label: ch, val: ch, span: 1 })),
+      [...'-/:;()&@"'.split('').map((ch) => ({ label: ch, val: ch, span: 1 })), { label: '⌫', act: 'bksp', fn: true, span: 1 }],
+      [...'+=!?_.,\'#~'.split('').map((ch) => ({ label: ch, val: ch, span: 1 }))],
+      [
+        { label: 'ABC', act: 'mode', fn: true, span: 2 },
+        { label: 'SPACE', act: 'space', fn: true, span: 4 },
+        { label: 'CLR', act: 'clear', fn: true, span: 2 },
+        { label: 'DONE', act: 'done', fn: true, done: true, span: 2 },
+      ],
+    ],
+  };
+
+  function getOskRowKeys(rowIdx) {
+    return OSK_ROWS[state.oskMode][rowIdx] || OSK_ROWS.abc[0];
+  }
+
+  function oskKeyIndexForLogicalCol(rowIdx, logicalCol) {
+    const keys = getOskRowKeys(rowIdx);
+    let colAcc = 0;
+    for (let i = 0; i < keys.length; i++) {
+      colAcc += keys[i].span;
+      if (logicalCol < colAcc) return i;
+    }
+    return keys.length - 1;
+  }
+
+  function oskLogicalColForKey(rowIdx, keyIdx) {
+    const keys = getOskRowKeys(rowIdx);
+    let colAcc = 0;
+    for (let i = 0; i < keyIdx && i < keys.length; i++) colAcc += keys[i].span;
+    return colAcc + Math.floor((keys[keyIdx]?.span || 1) / 2);
+  }
+
+  function applyOskInputValue(newVal) {
+    const input = state.oskTargetId ? $c(`#${state.oskTargetId}`) : null;
+    if (!input) return;
+    const maxLen = input.maxLength > 0 ? input.maxLength : 64;
+    const clipped = newVal.slice(0, maxLen);
+    input.value = clipped;
+    if (state.oskTargetId === 'catSearchInput') {
+      state.searchQuery = clipped;
+      state.listFocusIdx = 0;
+      libItemsEl.scrollTop = 0;
+      syncMinusOneBarUI();
+      renderCatalog();
+    }
+  }
+
+  function triggerOskKey(keyDef) {
+    const input = state.oskTargetId ? $c(`#${state.oskTargetId}`) : null;
+    if (!input) return;
+    const cur = input.value || '';
+    if (keyDef.act === 'bksp') {
+      if (cur.length > 0) {
+        sfx('back');
+        applyOskInputValue(cur.slice(0, -1));
+      } else {
+        sfx('bump');
+      }
+    } else if (keyDef.act === 'space') {
+      sfx('tick');
+      applyOskInputValue(`${cur} `);
+    } else if (keyDef.act === 'clear') {
+      if (cur.length > 0) {
+        sfx('back');
+        applyOskInputValue('');
+      } else {
+        sfx('bump');
+      }
+    } else if (keyDef.act === 'mode') {
+      sfx('tick');
+      state.oskMode = state.oskMode === 'abc' ? 'num' : 'abc';
+      renderOsk();
+    } else if (keyDef.act === 'done') {
+      sfx('confirm');
+      const targetId = state.oskTargetId;
+      closeOsk(false);
+      if (targetId === 'catSearchInput') {
+        if (!state.searchQuery.trim()) state.searchOpen = false;
+        state.inMinusOne = false;
+        syncMinusOneBarUI();
+        if (activeVirtualRender) activeVirtualRender(true);
+        else if (state.tab === 'playlists') renderCatalog();
+      } else if (targetId === 'newPlaylistInput' && cur.trim()) {
+        $c('#btnCreateAndAddPl').click();
+      }
+    } else if (keyDef.val !== undefined) {
+      sfx('tick');
+      applyOskInputValue(cur + keyDef.val);
+    }
+  }
+
+  function renderOsk() {
+    const grid = $c('#dsOskGrid');
+    grid.innerHTML = '';
+    const rows = OSK_ROWS[state.oskMode];
+    const activeKeyIdx = oskKeyIndexForLogicalCol(state.oskRow, state.oskCol);
+
+    rows.forEach((rowKeys, rIdx) => {
+      rowKeys.forEach((k, kIdx) => {
+        const btn = document.createElement('button');
+        const isFocused = rIdx === state.oskRow && kIdx === activeKeyIdx;
+        btn.type = 'button';
+        btn.className = `osk-key${k.fn ? ' fn-key' : ''}${k.done ? ' done-key' : ''}${k.span > 1 ? ` span-${k.span}` : ''}${isFocused ? ' kp-focus' : ''}`;
+        btn.textContent = k.label;
+        btn.addEventListener('pointerdown', (ev) => {
+          // Keep physical keyboard input focus intact when tapping touch keys
+          ev.preventDefault();
+        });
+        btn.addEventListener('click', () => {
+          state.oskRow = rIdx;
+          state.oskCol = oskLogicalColForKey(rIdx, kIdx);
+          triggerOskKey(k);
+          if (state.oskOpen) renderOsk();
+        });
+        grid.appendChild(btn);
+      });
+    });
+  }
+
+  function openOsk(targetId, resetPos = true) {
+    state.oskOpen = true;
+    state.oskTargetId = targetId;
+    if (resetPos) {
+      state.oskMode = 'abc';
+      state.oskRow = 0;
+      state.oskCol = 0;
+    }
+    $c('#dsOsk').hidden = false;
+    $c('#catalogPanel').classList.toggle('osk-open', targetId === 'catSearchInput');
+    renderOsk();
+  }
+
+  function closeOsk(playSfx = false) {
+    if (!state.oskOpen) return;
+    if (playSfx) sfx('back');
+    state.oskOpen = false;
+    const prevTarget = state.oskTargetId;
+    state.oskTargetId = null;
+    $c('#dsOsk').hidden = true;
+    $c('#catalogPanel').classList.remove('osk-open');
+    if (prevTarget) {
+      const inp = $c(`#${prevTarget}`);
+      if (inp) inp.blur();
+    }
+  }
+
+  function handleOskKeypad(btn) {
+    const rows = OSK_ROWS[state.oskMode];
+    const rowKeys = rows[state.oskRow];
+    const keyIdx = oskKeyIndexForLogicalCol(state.oskRow, state.oskCol);
+
+    if (btn === 'B') {
+      const targetId = state.oskTargetId;
+      closeOsk(true);
+      if (targetId === 'catSearchInput') {
+        if (!state.searchQuery.trim()) state.searchOpen = false;
+        state.inMinusOne = false;
+        syncMinusOneBarUI();
+        if (activeVirtualRender) activeVirtualRender(true);
+        else if (state.tab === 'playlists') renderCatalog();
+      }
+      return;
+    }
+    if (btn === 'Y') {
+      triggerOskKey({ act: 'bksp' });
+      return;
+    }
+    if (btn === 'A') {
+      triggerOskKey(rowKeys[keyIdx]);
+      if (state.oskOpen) renderOsk();
+      return;
+    }
+    if (btn === 'LEFT') {
+      if (keyIdx > 0) {
+        state.oskCol = oskLogicalColForKey(state.oskRow, keyIdx - 1);
+        sfx('tick');
+        renderOsk();
+      } else sfx('bump');
+      return;
+    }
+    if (btn === 'RIGHT') {
+      if (keyIdx < rowKeys.length - 1) {
+        state.oskCol = oskLogicalColForKey(state.oskRow, keyIdx + 1);
+        sfx('tick');
+        renderOsk();
+      } else sfx('bump');
+      return;
+    }
+    if (btn === 'UP') {
+      if (state.oskRow > 0) {
+        state.oskRow--;
+        sfx('tick');
+        renderOsk();
+      } else sfx('bump');
+      return;
+    }
+    if (btn === 'DOWN') {
+      if (state.oskRow < rows.length - 1) {
+        state.oskRow++;
+        sfx('tick');
+        renderOsk();
+      } else sfx('bump');
+      return;
+    }
+  }
+
+  function openCatalogSearch() {
+    if (state.detailStack.length || !isCatalogTab(state.tab)) return;
+    sfx('tick');
+    state.minusOneOpen = true;
+    state.inMinusOne = true;
+    state.searchOpen = true;
+    state.minusOneFocusIdx = 0;
+    const input = $c('#catSearchInput');
+    input.value = state.searchQuery;
+    syncMinusOneBarUI();
+    openOsk('catSearchInput', true);
+    requestAnimationFrame(() => input.focus());
+  }
+
+  function closeCatalogSearch(playSfx = true) {
+    if (!state.searchOpen && !state.searchQuery) return;
+    closeOsk(false);
+    if (playSfx) sfx('back');
+    state.searchOpen = false;
+    state.searchQuery = '';
+    state.inMinusOne = false;
+    const input = $c('#catSearchInput');
+    input.value = '';
+    input.blur();
+    state.listFocusIdx = 0;
+    libItemsEl.scrollTop = 0;
+    syncMinusOneBarUI();
+    renderCatalog();
   }
 
   function getCatalogRootTrackIds() {
@@ -1974,12 +2356,19 @@
 
   function syncMinusOneBarUI() {
     const bar = $c('#libCategoryBar');
-    bar.classList.toggle('revealed', state.minusOneOpen);
+    const activeSearch = isSearchBarActive();
+    bar.classList.toggle('revealed', state.minusOneOpen || activeSearch);
+    bar.classList.toggle('searching', activeSearch);
+    $c('#btnCatSearchClose').hidden = !activeSearch;
+    const placeholders = { albums: 'Search albums...', artists: 'Search artists...', tracks: 'Search songs...', playlists: 'Search playlists...' };
+    $c('#catSearchInput').placeholder = placeholders[state.tab] || 'Search...';
     const controls = getMinusOneControls();
     if (state.minusOneFocusIdx >= controls.length) state.minusOneFocusIdx = controls.length - 1;
     if (state.minusOneFocusIdx < 0) state.minusOneFocusIdx = 0;
 
     [
+      $c('#catSearchBar'),
+      $c('#btnCatSearchClose'),
       $c('#btnCatShufflePlay'),
       $c('#btnCatPlayAll'),
       $c('#btnAlbumViewGrid'),
@@ -2000,6 +2389,9 @@
     if (!state.minusOneOpen) sfx('tick');
     state.minusOneOpen = true;
     if (focusIt) {
+      if (!state.inMinusOne) {
+        state.minusOneFocusIdx = getDefaultMinusOneFocusIdx();
+      }
       state.inMinusOne = true;
       const controls = getMinusOneControls();
       state.minusOneFocusIdx = Math.min(state.minusOneFocusIdx, controls.length - 1);
@@ -2010,10 +2402,18 @@
   }
 
   function hideMinusOneBar(playSfx = false) {
+    if (state.searchQuery.trim().length > 0) {
+      state.inMinusOne = false;
+      syncMinusOneBarUI();
+      if (activeVirtualRender) activeVirtualRender(true);
+      else if (state.tab === 'playlists') renderCatalog();
+      return;
+    }
     if (!state.minusOneOpen && !state.inMinusOne) return;
     if (playSfx) sfx('tick');
     state.minusOneOpen = false;
     state.inMinusOne = false;
+    state.searchOpen = false;
     syncMinusOneBarUI();
     if (activeVirtualRender) activeVirtualRender(true);
     else if (state.tab === 'playlists') renderCatalog();
@@ -2270,13 +2670,13 @@
           if (renderedRows.has(r)) continue;
           const rowWrap = document.createElement('div');
           rowWrap.style.position = 'absolute';
-          rowWrap.style.left = '2px';
-          rowWrap.style.right = '2px';
+          rowWrap.style.left = '0';
+          rowWrap.style.right = '0';
           rowWrap.style.top = `${r * rowHeight}px`;
           if (cols >= 2) {
             rowWrap.style.display = 'grid';
             rowWrap.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-            rowWrap.style.gap = '16px';
+            rowWrap.style.gap = '14px';
           }
           for (let c = 0; c < cols; c++) {
             const idx = r * cols + c;
@@ -2402,6 +2802,7 @@
           libItemsEl.appendChild(rowEl);
         });
         libItemsEl.scrollTop = prevScrollTop;
+        configureSmartScrubber('detail', alb.tracks, { mode: 'scroll', field: 'index' }, libItemsEl.scrollHeight);
         if (focusedRowEl) smoothScrollIntoView(libItemsEl, focusedRowEl, scrollDuration);
         else if (state.detailFocusIdx < 0) smoothScrollTo(libItemsEl, 0, scrollDuration);
         return;
@@ -2474,6 +2875,7 @@
           libItemsEl.appendChild(rowEl);
         });
         libItemsEl.scrollTop = prevScrollTop;
+        configureSmartScrubber('detail', [...artistAlbums, ...trackSlice], { mode: 'scroll', field: 'index' }, libItemsEl.scrollHeight);
         if (focusedEl) smoothScrollIntoView(libItemsEl, focusedEl, scrollDuration);
         else if (state.detailFocusIdx < 0) smoothScrollTo(libItemsEl, 0, scrollDuration);
         return;
@@ -2521,6 +2923,7 @@
           empty.style.cssText = 'text-align:center; padding:48px 24px; font-size:var(--t-body); color:var(--text-dim);';
           empty.textContent = isStarred ? 'No starred songs yet. Star any track to see it here.' : 'Playlist is empty. Press Y on any track to add.';
           libItemsEl.appendChild(empty);
+          configureSmartScrubber('detail', [], { mode: 'scroll', field: 'index' }, 0);
         } else {
           let focusedPlRow = null;
           tracks.forEach((trk, idx) => {
@@ -2534,6 +2937,7 @@
             libItemsEl.appendChild(rowEl);
           });
           libItemsEl.scrollTop = prevScrollTop;
+          configureSmartScrubber('detail', tracks, { mode: 'scroll', field: 'index' }, libItemsEl.scrollHeight);
           if (focusedPlRow) smoothScrollIntoView(libItemsEl, focusedPlRow, scrollDuration);
           else if (state.detailFocusIdx < 0) smoothScrollTo(libItemsEl, 0, scrollDuration);
         }
@@ -2550,13 +2954,30 @@
 
     if (state.tab === 'albums' || state.tab === 'tracks' || state.tab === 'artists') {
       const sortMeta = getSortOptionMeta(state.tab);
-      const sorted = getSortedItems(state.tab);
+      const q = state.searchQuery.trim().toLowerCase();
+      let sorted = getSortedItems(state.tab);
+      if (q) {
+        if (state.tab === 'albums') {
+          sorted = sorted.filter((a) => a.title.toLowerCase().includes(q) || a.artist.toLowerCase().includes(q));
+        } else if (state.tab === 'artists') {
+          sorted = sorted.filter((a) => a.name.toLowerCase().includes(q));
+        } else if (state.tab === 'tracks') {
+          sorted = sorted.filter((t) => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q));
+        }
+      }
       state.activeSortedItems = sorted;
       if (state.listFocusIdx >= sorted.length) state.listFocusIdx = Math.max(0, sorted.length - 1);
 
       catPlayActions.hidden = false;
       sortControls.hidden = false;
       $c('#sortFieldLabel').textContent = `${sortMeta.label} ${sortMeta.dir === 'asc' ? '↑' : '↓'}`;
+
+      if (q && !sorted.length) {
+        $c('#catHeaderCount').textContent = '0';
+        libItemsEl.innerHTML = '<div class="queue-empty">No matches</div>';
+        configureSmartScrubber(state.tab, [], sortMeta, 0);
+        return;
+      }
 
       if (state.tab === 'albums') {
         albumViewToggle.hidden = false;
@@ -2598,15 +3019,23 @@
         configureSmartScrubber('artists', sorted, sortMeta, h);
       }
     } else if (state.tab === 'playlists') {
-      const allPls = [
+      const q = state.searchQuery.trim().toLowerCase();
+      let allPls = [
         { id: '__starred__', name: 'Starred', isStarred: true, count: getStarredTrackIds().length },
         ...state.playlists.map((p) => ({ id: p.id, name: p.name, isStarred: false, count: p.trackIds.length })),
       ];
+      if (q) allPls = allPls.filter((pl) => pl.name.toLowerCase().includes(q));
       state.activeSortedItems = allPls;
       if (state.listFocusIdx >= allPls.length) state.listFocusIdx = Math.max(0, allPls.length - 1);
 
       $c('#catHeaderCount').textContent = String(allPls.length);
       newPlHeaderBtn.hidden = false;
+
+      if (!allPls.length) {
+        libItemsEl.innerHTML = '<div class="queue-empty">No matches</div>';
+        configureSmartScrubber('playlists', [], { mode: 'scroll', field: 'index' }, 0);
+        return;
+      }
 
       allPls.forEach((pl, idx) => {
         const row = document.createElement('div');
@@ -2625,6 +3054,7 @@
         libItemsEl.appendChild(row);
       });
       libItemsEl.scrollTop = prevScrollTop;
+      configureSmartScrubber('playlists', allPls, { mode: 'scroll', field: 'index' }, libItemsEl.scrollHeight);
     }
   }
 
@@ -2639,6 +3069,7 @@
 
     if (state.queue.length === 0) {
       list.innerHTML = '<div class="queue-empty">Up Next is empty</div>';
+      configureQueueScrubber();
       return;
     }
 
@@ -2679,6 +3110,7 @@
       list.appendChild(row);
     });
     list.scrollTop = prevScroll;
+    configureQueueScrubber();
     if (scrollDuration > 0 && list.children[state.queueFocusIdx]) {
       smoothScrollIntoView(list, list.children[state.queueFocusIdx], scrollDuration);
     }
@@ -3297,6 +3729,12 @@
       return;
     }
 
+    // 0) Active On-Screen Virtual Keypad captures D-Pad / A / B / Y cleanly
+    if (state.oskOpen) {
+      handleOskKeypad(btn);
+      return;
+    }
+
     // 1) Active Modal Sheet captures D-Pad / A / B cleanly
     const sheet = activeSheetType();
     if (sheet) {
@@ -3459,6 +3897,11 @@
       return;
     }
 
+    if (btn === 'B' && isSearchBarActive()) {
+      closeCatalogSearch(true);
+      return;
+    }
+
     // If focus is currently inside the -1 Utility Bar
     if (state.inMinusOne) {
       const controls = getMinusOneControls();
@@ -3490,7 +3933,10 @@
       return;
     }
 
-    if (!items.length) return;
+    if (!items.length) {
+      if (btn === 'UP') revealMinusOneBar(true);
+      return;
+    }
 
     const cols = state.tab === 'albums' ? getAlbumsLayout().cols : 1;
     let nextIdx = state.listFocusIdx;
@@ -3641,7 +4087,7 @@
     '.tactile-btn', '.quick-pad', '.wf-icon-btn', '.vol-mute-btn', '.output-menu-btn',
     '.deck-tab', '.nav-shoulder-hint', '.sort-pill-btn', '.view-mode-btn',
     '.cat-act-btn', '.detail-back-btn', '.detail-act-btn', '.track-q-btn',
-    '.q-mini-btn', '.seg-btn', '.sheet-big-btn', '.sheet-close',
+    '.q-mini-btn', '.seg-btn', '.sheet-big-btn', '.sheet-close', '.osk-key', '.cat-search-close',
     '.track-row', '.album-grid-tile', '.album-list-row', '.album-card',
     '.artist-row', '.playlist-row', '.queue-row', '.picker-row',
   ].join(',');
@@ -3798,8 +4244,27 @@
     showToast(`Repeat: ${state.repeat.toUpperCase()}`);
   });
 
-  // Catalog Back, Play/Shuffle, Album View Toggle, Sort Order & New Playlist
+  // Catalog Back, Search, Play/Shuffle, Album View Toggle, Sort Order & New Playlist
   $c('#btnDetailBack').addEventListener('click', popDetail);
+  $c('#btnCatSearchClose').addEventListener('click', () => closeCatalogSearch(true));
+  $c('#catSearchBar').addEventListener('click', (e) => {
+    if (e.target.closest('#btnCatSearchClose')) return;
+    if (!state.oskOpen || state.oskTargetId !== 'catSearchInput') openCatalogSearch();
+    else $c('#catSearchInput').focus();
+  });
+  $c('#catSearchInput').addEventListener('pointerdown', () => {
+    if (!state.oskOpen || state.oskTargetId !== 'catSearchInput') openCatalogSearch();
+  });
+  $c('#catSearchInput').addEventListener('input', (e) => {
+    state.searchQuery = e.target.value;
+    state.listFocusIdx = 0;
+    libItemsEl.scrollTop = 0;
+    syncMinusOneBarUI();
+    renderCatalog();
+  });
+  $c('#newPlaylistInput').addEventListener('pointerdown', () => {
+    if (!state.oskOpen || state.oskTargetId !== 'newPlaylistInput') openOsk('newPlaylistInput', true);
+  });
   $c('#btnCatShufflePlay').addEventListener('click', () => playCatalogRoot(true));
   $c('#btnCatPlayAll').addEventListener('click', () => playCatalogRoot(false));
   $c('#btnAlbumViewGrid').addEventListener('click', () => setAlbumView('grid'));
@@ -3911,7 +4376,38 @@
   // Full Keyboard Mapping for Testing Keypad-Only Ergonomics
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' && e.target.type === 'text') {
-      if (e.key === 'Enter' && e.target.id === 'newPlaylistInput') $c('#btnCreateAndAddPl').click();
+      if (state.oskOpen && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault();
+        const dirMap = { ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT' };
+        handleOskKeypad(dirMap[e.key]);
+        return;
+      }
+      if (e.target.id === 'catSearchInput') {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          if (state.oskOpen) handleOskKeypad('B');
+          else closeCatalogSearch(true);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          closeOsk(false);
+          e.target.blur();
+          if (!state.searchQuery.trim()) state.searchOpen = false;
+          state.inMinusOne = false;
+          syncMinusOneBarUI();
+          if (activeVirtualRender) activeVirtualRender(true);
+          else if (state.tab === 'playlists') renderCatalog();
+        }
+        return;
+      }
+      if (e.target.id === 'newPlaylistInput') {
+        if (e.key === 'Escape' && state.oskOpen) { e.preventDefault(); closeOsk(true); return; }
+        if (e.key === 'Enter') { e.preventDefault(); closeOsk(false); $c('#btnCreateAndAddPl').click(); }
+      }
+      return;
+    }
+    if (e.key === '/' && isCatalogTab(state.tab) && !state.detailStack.length && !activeSheetType() && !state.inSettings) {
+      e.preventDefault();
+      openCatalogSearch();
       return;
     }
     const key = e.key.toLowerCase();

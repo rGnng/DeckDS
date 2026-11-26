@@ -88,6 +88,10 @@
       <circle cx="17.5" cy="16.5" r="2.3" fill="currentColor"/>
       <path d="M19.8 16.5V9.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
     </symbol>
+    <symbol id="ic-search" viewBox="0 0 24 24">
+      <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.3"/>
+      <path d="M15.4 15.4l4.8 4.8" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>
+    </symbol>
     <!-- Iconify Stage Icons: lucide:disc-album (CD Case), carbon:meter (VU Meter), foundation:graph-bar (Spectrum) -->
     <symbol id="ic-stage-cover" viewBox="0 0 24 24">
       <rect width="18" height="18" x="3" y="3" rx="2" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
@@ -538,9 +542,14 @@
 
         <!-- SHARED CATALOG BROWSER PANEL (DRIVES ALBUMS / ARTISTS / PLAYLISTS / SONGS + DETAIL DRILL-DOWN) -->
         <section class="deck-panel" data-deck="catalog" id="catalogPanel">
-          <!-- -1 Pull/Press-Up Utility Bar (Count + Play/Shuffle + Album View Toggle + Order Button) -->
+          <!-- -1 Pull/Press-Up Utility Bar (Left Inline Search + Play/Shuffle + Album View Toggle + Order Button) -->
           <div class="minus-one-bar" id="libCategoryBar">
-            <span class="cat-header-count" id="catHeaderCount">100</span>
+            <div class="cat-search-bar" id="catSearchBar">
+              <span class="cat-search-ic"><svg class="ic-24"><use href="#ic-search"/></svg></span>
+              <input type="text" class="cat-search-input" id="catSearchInput" placeholder="Search..." autocomplete="off" />
+              <span class="cat-header-count" id="catHeaderCount">100</span>
+              <button class="cat-search-close" id="btnCatSearchClose" title="Clear Search (B)" aria-label="Clear Search" hidden>✕</button>
+            </div>
             <div class="cat-play-actions" id="catPlayActions" hidden>
               <button class="cat-act-btn" id="btnCatShufflePlay" title="Shuffle Play" aria-label="Shuffle Play">
                 <svg class="ic-24"><use href="#ic-shuffle"/></svg>
@@ -596,7 +605,7 @@
 
           <div class="lib-content-wrap" id="libContentWrap">
             <div class="lib-items" id="libItems"></div>
-            <div class="smart-scrubber" id="smartScrubber" hidden title="Drag finger or stylus to jump">
+            <div class="smart-scrubber" id="smartScrubber" title="Drag finger or stylus to scroll">
               <div class="scrubber-ticks" id="scrubberTicks"></div>
               <div class="scrubber-thumb" id="scrubberThumb"></div>
             </div>
@@ -607,9 +616,19 @@
           </div>
         </section>
 
-        <!-- TAB 06: QUEUE (FULL-HEIGHT UP NEXT — NO REDUNDANT HEADER/COUNT/RUNTIME) -->
+        <!-- TAB 06: QUEUE (FULL-HEIGHT UP NEXT + UNIFIED RIGHT SCROLLBAR) -->
         <section class="deck-panel" data-deck="queue">
-          <div class="queue-scroll" id="queueList"></div>
+          <div class="lib-content-wrap">
+            <div class="queue-scroll" id="queueList"></div>
+            <div class="smart-scrubber" id="queueScrubber" title="Drag finger or stylus to scroll">
+              <div class="scrubber-ticks" id="queueScrubberTicks"></div>
+              <div class="scrubber-thumb" id="queueScrubberThumb"></div>
+            </div>
+            <div class="scrubber-popup" id="queueScrubberPopup" hidden>
+              <div class="popup-hero" id="queueScrubberPopupHero">1</div>
+              <div class="popup-sub" id="queueScrubberPopupSub">Up Next</div>
+            </div>
+          </div>
         </section>
 
         <!-- SETTINGS VIEW (OPENED FROM PLAY DECK ⚙ BUTTON; B RETURNS TO PLAY) -->
@@ -744,6 +763,11 @@
               <button class="detail-act-btn primary" id="btnCreateAndAddPl">Create</button>
             </div>
           </div>
+        </div>
+
+        <!-- ON-SCREEN TOUCH + D-PAD CURSOR KEYPAD (SEARCH & NEW PLAYLIST) -->
+        <div class="ds-osk" id="dsOsk" hidden role="region" aria-label="On-Screen Keypad">
+          <div class="ds-osk-grid" id="dsOskGrid"></div>
         </div>
 
       </div>

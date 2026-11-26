@@ -644,7 +644,8 @@ html[data-theme="vfd"] .sheet-big-btn,
 html[data-theme="vfd"] .picker-row,
 html[data-theme="vfd"] .track-no-badge,
 html[data-theme="vfd"] .brightness-val,
-html[data-theme="vfd"] .queue-empty {
+html[data-theme="vfd"] .queue-empty,
+html[data-theme="vfd"] .osk-key {
   font-family: var(--font-vfd-12);
 }
 html[data-theme="vfd"] .top-status-bar,
@@ -667,6 +668,9 @@ html[data-theme="vfd"] .setting-card label,
 html[data-theme="vfd"] .brightness-head label,
 html[data-theme="vfd"] .seg-btn,
 html[data-theme="vfd"] .new-pl-input,
+html[data-theme="vfd"] .cat-search-input,
+html[data-theme="vfd"] .cat-search-count,
+html[data-theme="vfd"] .osk-key.fn-key,
 html[data-theme="vfd"] .popup-sub {
   font-family: var(--font-vfd-10);
 }
@@ -726,6 +730,8 @@ html[data-theme="vfd"] .artist-row,
 html[data-theme="vfd"] .playlist-row,
 html[data-theme="vfd"] .detail-header-bar,
 html[data-theme="vfd"] .minus-one-bar,
+html[data-theme="vfd"] .cat-search-bar,
+html[data-theme="vfd"] .cat-search-close,
 html[data-theme="vfd"] .smart-scrubber,
 html[data-theme="vfd"] .sheet-card,
 html[data-theme="vfd"] .sheet-big-btn:not(.active-opt):not(.danger-btn),
@@ -820,11 +826,15 @@ html[data-theme="vfd"] .playlist-row,
 html[data-theme="vfd"] .pl-icon-box,
 html[data-theme="vfd"] .detail-header-bar,
 html[data-theme="vfd"] .minus-one-bar,
+html[data-theme="vfd"] .cat-search-bar,
+html[data-theme="vfd"] .cat-search-close,
 html[data-theme="vfd"] .smart-scrubber,
 html[data-theme="vfd"] .scrubber-thumb,
 html[data-theme="vfd"] .scrubber-popup,
 html[data-theme="vfd"] .vol-popup,
 html[data-theme="vfd"] .sheet-card,
+html[data-theme="vfd"] .ds-osk,
+html[data-theme="vfd"] .osk-key,
 html[data-theme="vfd"] .sheet-close,
 html[data-theme="vfd"] .sheet-big-btn,
 html[data-theme="vfd"] .picker-row,
@@ -1285,7 +1295,7 @@ html[data-theme="vfd"] .deck-tab.active {
 .deck-panel {
   position: absolute;
   inset: 0;
-  padding: 18px 20px;
+  padding: 16px 16px 18px;
   display: none;
   flex-direction: column;
   gap: 16px;
@@ -1587,11 +1597,11 @@ html[data-theme="vfd"] .tactile-btn.hero-play::after {
   box-shadow: 0 3px 10px rgba(0,0,0,0.5);
 }
 
-/* 4 Large Quick-Action Pads (228×104 × 4 + 24×3 = exact 984px, 0 half-pixels!) */
+/* 4 Large Quick-Action Pads (236×104 × 4 + 16×3 = exact 992px flush with L1/R1!) */
 .quick-pad-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 24px;
+  gap: 16px;
   height: 104px;
   flex-shrink: 0;
 }
@@ -1768,11 +1778,11 @@ html[data-theme="vfd"] .tactile-btn.hero-play::after {
   font-size: var(--t-sub);
   font-weight: 700;
   color: var(--text-dim);
-  background: var(--bg-elev);
+  background: var(--bg-card);
   border: 2px solid var(--border);
-  padding: 4px 14px;
-  border-radius: 10px;
-  margin-right: auto;
+  padding: 2px 10px;
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 
 /* Play & Shuffle Play Icon Buttons inside -1 Bar (Text Only on Cursor Focus) */
@@ -1895,6 +1905,122 @@ html[data-theme="vfd"] .view-mode-btn.active {
   gap: 10px;
   cursor: pointer;
 }
+
+/* Left-Docked Inline Search Box inside -1 Utility Bar (Unified 320px idle, 100% width when active) */
+.minus-one-bar.searching > :not(.cat-search-bar) {
+  display: none !important;
+}
+.cat-search-bar {
+  flex: 0 0 320px;
+  width: 320px;
+  margin-right: auto;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px 0 14px;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 2px solid var(--border-strong);
+  cursor: text;
+}
+.minus-one-bar.searching .cat-search-bar {
+  flex: 1 1 100%;
+  width: 100%;
+  margin-right: 0;
+}
+.cat-search-bar:focus-within {
+  border-color: var(--accent);
+}
+.cat-search-ic {
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.cat-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--t-sub);
+  font-weight: 600;
+  outline: none;
+}
+.cat-search-input::placeholder {
+  color: var(--text-muted);
+}
+.cat-search-close {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: 2px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--t-sub);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.cat-search-close[hidden] { display: none; }
+
+/* On-Screen Touch + D-Pad Cursor Virtual Keypad (Exact 992px flush with L1/R1, 90×58px keys!) */
+#catalogPanel.osk-open .lib-items {
+  padding-bottom: 300px;
+}
+.ds-osk {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 42;
+  background: var(--bg-elev);
+  border: 2px solid var(--border-strong);
+  border-radius: 16px;
+  padding: 10px 8px;
+  box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.55);
+}
+.ds-osk[hidden] { display: none; }
+.ds-osk-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 8px;
+}
+.osk-key {
+  height: 58px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--t-body);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.osk-key.fn-key {
+  background: var(--bg);
+  border-color: var(--border-strong);
+  font-size: var(--t-sub);
+  color: var(--text-dim);
+}
+.osk-key.done-key {
+  background: var(--bg-card-hover);
+  border-color: var(--border-strong);
+  color: var(--accent);
+}
+.osk-key.span-2 { grid-column: span 2; }
+.osk-key.span-4 { grid-column: span 4; }
 .sort-section-label {
   font-family: var(--font-mono);
   font-size: var(--t-cap);
@@ -2021,6 +2147,7 @@ html[data-theme="vfd"] .view-mode-btn.active {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  margin: 0 -4px;
   padding: 4px;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -2160,6 +2287,7 @@ html[data-theme="vfd"] .view-mode-btn.active {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  margin: 0 -4px;
   padding: 4px;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -2619,6 +2747,8 @@ html[data-theme="vfd"] .view-mode-btn.active {
 .seg-btn,
 .sheet-big-btn,
 .sheet-close,
+.osk-key,
+.cat-search-close,
 .track-row,
 .album-grid-tile,
 .album-list-row,
@@ -2653,7 +2783,9 @@ html[data-theme="vfd"] .view-mode-btn.active {
 .q-mini-btn:active, .q-mini-btn.is-pressed,
 .seg-btn:active, .seg-btn.is-pressed,
 .sheet-big-btn:active, .sheet-big-btn.is-pressed,
-.sheet-close:active, .sheet-close.is-pressed {
+.sheet-close:active, .sheet-close.is-pressed,
+.osk-key:active, .osk-key.is-pressed,
+.cat-search-close:active, .cat-search-close.is-pressed {
   transform: scale(0.94);
   border-color: var(--accent);
   box-shadow: inset 0 3px 10px rgba(0, 0, 0, 0.32), 0 0 0 3px var(--accent-soft);
@@ -2763,7 +2895,7 @@ html[data-theme="vfd"] .view-mode-btn.active {
   color: var(--text-muted);
 }
 .compact-settings-grid {
-  gap: 14px;
+  gap: 16px;
 }
 .compact-settings-grid .setting-card {
   padding: 18px 20px;
@@ -3032,7 +3164,7 @@ html[data-theme="vfd"] .view-mode-btn.active {
 .artist-albums-strip {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 14px;
+  gap: 16px;
   flex-shrink: 0;
 }
 
