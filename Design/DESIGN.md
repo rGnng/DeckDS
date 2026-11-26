@@ -76,8 +76,8 @@ Zero double headers and **zero bottom tooltip bar** (every screen gets the full 
   - Compiled `aarch64` native Linux binary on **64-bit Linux** (ROCKNIX kiosk mode initially, migrating to a minimal read-only Buildroot appliance image).
   - **Power on → straight into DECK DS**, supervised with auto-restart (`never exits` to an OS shell). Read-only OS rootfs + writable `/data` config/SQLite DB + `/mnt/sd2/Music` library.
   - Pre-fader audio metering (VU + Spectrum tied directly to source PCM before ALSA volume/mute), hardware `SW_LID` Pocket Audio mode, `KEY_POWER` graceful shutdown, and USB Mass Storage / BlueZ pairing inside Settings.
-- **Opt-In OTA Updates (Empty by Default):**
-  - **OTA URL is empty by default** — DeckDS never phones home or forces checking any hardcoded repository or server unless the user explicitly configures an update URL (e.g., a GitHub Releases endpoint such as `rGnng/DeckDS`, a personal fork, or a self-hosted LAN URL via Settings / LAN Web Config).
+- **Opt-In OTA Updates (Empty by Default, Configured via LAN Web Config):**
+  - **OTA URL is empty by default** — DeckDS never phones home or forces checking any hardcoded repository or server unless the user explicitly sets an update URL (e.g., a GitHub Releases endpoint such as `rGnng/DeckDS`, a personal fork, or a self-hosted LAN URL) in the **LAN Web Config** (or `config.toml` — no awkward URL typing on the handheld).
   - When an OTA URL is configured, DeckDS checks for new `aarch64` releases on demand (or optional periodic check), verifies the SHA-256 checksum, atomically swaps binary/assets into a staging slot (with automatic rollback on failure), and restarts `deckds`.
 - **LAN Debug, Config & Remote Web Control (Built-In Lightweight HTTP/WS Server):**
   - Exposes a local LAN port (e.g., `http://<device-ip>:8080`, toggleable in Settings — runs natively on the device for external browsers on phone/PC, zero browser on the handheld).
