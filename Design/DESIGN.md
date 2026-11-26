@@ -78,11 +78,13 @@ Zero arbitrary font sizes inside either `1024 × 768` screen.
 | `--t-title` | **`32 px`** (`Space Grotesk`) | **`32 px`** (`2×` `DotGothic16`) | `2.7 mm` | Top artist, unified dock title, detail/sheet headers |
 | `--t-body` | **`26 px`** (`Space Grotesk` / `IBM Plex Mono`) | **`24 px`** (`2×` `PixelMplus12`) | `2.2 mm` | List item names, timecodes, volume popup, OSK keys, sheet actions |
 | `--t-sub` | **`21 px`** (`Space Grotesk` / `IBM Plex Mono`) | **`20 px`** (`2×` `PixelMplus10`) | `1.8 mm` | Subtitles, status bar, active tab, buttons, search input |
-| `--t-cap` | **`18 px`** (`IBM Plex Mono`) | **`16 px`** (`1×` `DotGothic16`) | `1.54 mm` | Micro captions, counts, notches, inline keycaps (`Y`, `SEL`) |
+| `--t-cap` | **`18 px`** (`IBM Plex Mono`) | **`16 px`** (`1×` `DotGothic16`) | `1.54 mm` | Micro captions, counts, notches, inline shortcut hints (`X`, `Y`, `SEL`) |
+
+Obsidian and Ceramic use M PLUS 1p Regular as the antialiased Japanese fallback.
 
 ### 3.4 Authentic VFD Dot-Matrix Rendering Rules
-- **Unified `2.00 px` VFD dot pitch** across fonts, pixel icons (`8×8` @ `16 px`, `16×16` @ `32 px`, `24×24` @ `48 px`, `32×32` @ `64 px` from [`vfd-icons.js`](./vfd-icons.js)), `4 × 4 px` unlit dot-grid texture, `2 px` squared corners, segmented progress/battery/slider tracks, and a global `1 px / 2 px` anode grid mask shader.
-- **Album covers are strictly exempt** from pixelation and the VFD anode mask so artwork stays razor-sharp full resolution.
+- **Unified `2.00 px` VFD dot pitch** across fonts, pixel icons (`8×8` @ `16 px`, `16×16` @ `32 px`, `24×24` @ `48 px`, `32×32` @ `64 px` from [`vfd-icons.js`](./vfd-icons.js)), `4 × 4 px` unlit dot-grid texture, `2 px` squared corners, and segmented progress/battery/slider tracks.
+- Album artwork uses full-resolution rendering.
 
 ---
 
@@ -98,7 +100,7 @@ Zero arbitrary font sizes inside either `1024 × 768` screen.
 | **`X`** | Cycle Top Stage (`COVER → VU → SPECTRUM`). |
 | **`SELECT`** | Open **Order By** sheet (Albums / Artists / Songs), **New Playlist** (Playlists), or **Settings** (on `DECK`). |
 | **`L2 / R2`** | Global Previous / Next Track. |
-| **`START`** | Global Play / Pause (or **Shuffle All** when stopped & Up Next is empty). |
+| **`START`** | **Done** while the pop-up keypad is open. Otherwise Play / Pause (or **Shuffle All** when stopped & Up Next is empty). |
 | **Left Aux 1 (`STAR`)** | Global Star / Unstar current track. |
 | **Left Aux 2 (`NOW`)** | Smart Jump (`DECK` ↔ Current Track's Album Detail). |
 | **Analog Stick** | Scrub playback position on `DECK`. |
@@ -149,10 +151,12 @@ When the last track finishes (or `Next` is pressed with empty Up Next):
 - Active tab expands (`flex: 3`, `300 px`) showing icon + label; inactive tabs stay compact (`flex: 1`, `100 px`) icon-only.
 
 ### 6.2 Tab 1: `DECK` (`992 px` inner width, `padding: 16px 16px 18px`, `gap: 16px`)
-1. **Waveform Card (`flex: 1`):** Track title | Elapsed/Total timecodes | `⋯ [Y]` Context Menu | `⚙ [SEL]` Settings | Interactive 80-bar (or `8 px` VFD dot-matrix) touch/stylus scrubber canvas.
+1. **Waveform Card (`flex: 1`):** Track title | Elapsed/Total timecodes | `⋯ Y` Context Menu | `⚙ SEL` Settings | Interactive 80-bar (or `8 px` VFD dot-matrix) touch/stylus scrubber canvas. The elapsed timecode updates while scrubbing.
 2. **Transport Row (`172 px` tall, `gap: 16px`):** Exact squares **`172 × 172`** (`Prev`), **`428 × 172`** (`Play/Pause` — becomes `Shuffle All` when stopped & Up Next empty), **`172 × 172`** (`Next`), **`172 × 172`** (`Star`, icon-only fill toggle). Prev/Next support short tap = skip, hold `≥ 320 ms` = silent seek.
 3. **Single-Line Volume Bar (`94 px` tall):** Mute toggle button (`58×58`) | Horizontal slider with floating `#volPopup` bubble above thumb **only while adjusting** (no static volume number in bar) | Output Device icon-only button (`58×58`, opens Audio Output sheet).
-4. **4 Quick Pads (`104 px` tall, `gap: 16px` → `236 × 104 px` each):** Stage cycle icon (`lucide:disc-album` / `carbon:meter` / `foundation:graph-bar`, no `X` highlight), Shuffle (`bi:shuffle`, subtle bottom dot when active), Repeat (`bi:repeat` / `bi:repeat-1`, subtle dot when active), Go to Current Album (`#ic-goto-album`).
+4. **4 Quick Pads (`104 px` tall, `gap: 16px` → `236 × 104 px` each):** Centered stage cycle icon (`lucide:disc-album` / `carbon:meter` / `foundation:graph-bar`) with an `X` keycap in the top-right corner, Shuffle (`bi:shuffle`, subtle bottom dot when active), Repeat (`bi:repeat` / `bi:repeat-1`, subtle dot when active), Go to Current Album (`#ic-goto-album`).
+
+Both previews use the SVG keycaps in the [icon sprite](index.html). The set includes circular `A`, `B`, `X`, and `Y` and capsule-shaped `START`, `SELECT`, `STA`, and `SEL`. The compact `SEL` variant appears in the Deck header.
 
 ### 6.3 Tabs 2–5: `ALBUMS`, `ARTISTS`, `PLAYLISTS`, `SONGS`
 - **`-1` Pull / Press-Up Utility Bar:**
@@ -162,9 +166,10 @@ When the last track finishes (or `Next` is pressed with empty Up Next):
 - **List & Grid Layouts (All flush with `L1` / `R1`, all with `64 px` right-hand scrollbar):**
   - **Albums Grid:** 3 columns (`296 × 368 px` tiles, `14 px` gap, no release year, bare numeric track count badge). **Albums List:** 1-column full-width rows (`118 px` tall).
   - **Artists:** 1-column rows (no profile avatar, single subtitle `N Albums, Y Songs`). **Artist Detail:** 2-column Albums grid (`450 px` wide cards) seamlessly navigable by 2D D-Pad into Detail Header (`-3..-1`) and Songs list.
-  - **Playlists:** 1-column rows (`Starred` + custom playlists, bare numeric count, zero `"Built-in / Custom"` filler).
+  - **Playlists:** 1-column rows (`Starred` + custom playlists) with the same numeric count badge as the Albums list.
   - **Songs:** Virtualized 1-column rows (`116 px` tall); now-playing `#ic-play` badge overlaid on bottom-right of album thumbnail (never on song title).
   - **Album Detail:** Multi-disc dividers (`DISC 1`, `DISC 2`), single-line track rows (`92 px` tall), `#ic-play` inside `.track-no-badge.is-playing`.
+  - **Album and Artist Detail:** The Play button uses the same fill and text colors as Shuffle and Queue, with the expanding focus label.
 - **Universal `64 px` Right-Hand Scrollbar/Scrubber:** Present on **every** list view (Albums, Artists, Playlists, Songs, all Detail views, and Queue). Fixed `44 px` GPU-translated thumb (`translate3d`), direct finger-locked drag, contextual ticks (`A–Z` / `Year` / `#`) + floating jump popup.
 - **On-Screen Touch + D-Pad Virtual Keypad (`#dsOsk`):**
   - Anchored at bottom (`left: 16px; right: 16px; bottom: 16px` = `992 px` wide), 10-column grid of exact **`90 × 58 px`** keys (4 rows: `ABC` QWERTY + `123` symbols, `⌫`, `SPACE`, `CLR`, `DONE`), 100% operable by touch and 2D D-Pad (`A` types, `Y` backspace, `B`/`DONE` dismisses into live filtered list). Used for both Search and New Playlist creation.

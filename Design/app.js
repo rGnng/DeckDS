@@ -2362,6 +2362,7 @@
     $c('#btnCatSearchClose').hidden = !activeSearch;
     const placeholders = { albums: 'Search albums...', artists: 'Search artists...', tracks: 'Search songs...', playlists: 'Search playlists...' };
     $c('#catSearchInput').placeholder = placeholders[state.tab] || 'Search...';
+    $c('#btnCatPlayAll').classList.toggle('primary', state.tab === 'tracks');
     const controls = getMinusOneControls();
     if (state.minusOneFocusIdx >= controls.length) state.minusOneFocusIdx = controls.length - 1;
     if (state.minusOneFocusIdx < 0) state.minusOneFocusIdx = 0;
@@ -2748,7 +2749,9 @@
       catBar.hidden = true;
       detailBar.hidden = false;
       $c('#btnDetailShufflePlay').classList.toggle('kp-focus', state.detailFocusIdx === -3);
-      $c('#btnDetailPlayAll').classList.toggle('kp-focus', state.detailFocusIdx === -2);
+      const detailPlay = $c('#btnDetailPlayAll');
+      detailPlay.classList.toggle('primary', detail.type === 'playlist');
+      detailPlay.classList.toggle('kp-focus', state.detailFocusIdx === -2);
       $c('#btnDetailQueueAll').classList.toggle('kp-focus', state.detailFocusIdx === -1);
 
       if (detail.type === 'album') {
@@ -3045,7 +3048,7 @@
           <div class="track-meta-main">
             <div class="track-name">${pl.name}</div>
           </div>
-          <div class="pl-count-badge">${pl.count}</div>
+          <div class="album-card-count">${pl.count}</div>
         `;
         row.addEventListener('click', () => {
           state.listFocusIdx = idx;
@@ -3705,7 +3708,11 @@
     }
 
     // Global Hardware Shortcuts
-    if (btn === 'START') { togglePlayWithSfx(); return; }
+    if (btn === 'START') {
+      if (state.oskOpen && !state.lidClosed) triggerOskKey({ act: 'done' });
+      else togglePlayWithSfx();
+      return;
+    }
     if (btn === 'AUX1') { toggleStarTrack(state.currentTrackId); return; }
     if (btn === 'AUX2') { handleAuxNowJump(); return; }
     if (btn === 'X') { cycleStage(); return; }
@@ -4000,6 +4007,14 @@
   }
 
   let volPopupTimer = null;
+  let volumePointer = null;
+
+  function scheduleVolumePopupHide() {
+    clearTimeout(volPopupTimer);
+    if (volumePointer === null) {
+      volPopupTimer = setTimeout(() => $c('#volPopup').classList.remove('show'), 700);
+    }
+  }
 
   function showVolumePopup(effective, isMuted) {
     const pop = $c('#volPopup');
@@ -4008,10 +4023,7 @@
     pop.classList.toggle('muted', isMuted);
     pop.style.left = `calc(22px + (100% - 44px) * ${norm.toFixed(4)})`;
     pop.classList.add('show');
-    clearTimeout(volPopupTimer);
-    volPopupTimer = setTimeout(() => {
-      pop.classList.remove('show');
-    }, 700);
+    scheduleVolumePopupHide();
   }
 
   function adjustVolume(deltaPct) {
@@ -4302,10 +4314,19 @@
     state.muted = val === 0;
     updateVolumeUI(val, true, true);
   });
-  $c('#volumeSlider').addEventListener('pointerdown', () => {
+  $c('#volumeSlider').addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    volumePointer = e.pointerId;
     const isMuted = state.muted || state.volume === 0;
     showVolumePopup(isMuted ? 0 : state.volume, isMuted);
   });
+  function endVolumeDrag(e) {
+    if (volumePointer !== e.pointerId) return;
+    volumePointer = null;
+    scheduleVolumePopupHide();
+  }
+  window.addEventListener('pointerup', endVolumeDrag);
+  window.addEventListener('pointercancel', endVolumeDrag);
   $c('#brightnessSlider').addEventListener('input', (e) => setBrightnessIndex(Number(e.target.value)));
 
   $$c('[data-lid-mode]').forEach((b) => {
@@ -4373,78 +4394,103 @@
     if (e.dataTransfer?.files?.length) importAudioFiles(e.dataTransfer.files);
   });
 
-  // Full Keyboard Mapping for Testing Keypad-Only Ergonomics
+  const keyboardButtons = {
+    ' ': 'START', tab: 'SELECT', c: 'X', q: 'L1', e: 'R1',
+    '1': 'L2', '2': 'R2', z: 'A', enter: 'A', x: 'B', backspace: 'B',
+    v: 'Y', d: 'AUX1', h: 'AUX2',
+  };
+  const keyboardDirections = { ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT' };
+  const heldKeyboardActions = new Map();
+
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' && e.target.type === 'text') {
-      if (state.oskOpen && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        e.preventDefault();
-        const dirMap = { ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT' };
-        handleOskKeypad(dirMap[e.key]);
-        return;
+    if (e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target;
+    const inText = target.tagName === 'INPUT' && target.type === 'text';
+    const direction = keyboardDirections[e.key];
+    if (direction) {
+      if (inText && !state.oskOpen) return;
+      e.preventDefault();
+      if (inText) handleOskKeypad(direction);
+      else if ((direction === 'LEFT' || direction === 'RIGHT') && isPlayDirectMode()) {
+        if (!e.repeat) startPlayDirHold(direction);
+      } else {
+        dispatchHardware(direction);
       }
-      if (e.target.id === 'catSearchInput') {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          if (state.oskOpen) handleOskKeypad('B');
-          else closeCatalogSearch(true);
-        } else if (e.key === 'Enter') {
-          e.preventDefault();
+      return;
+    }
+
+    const key = e.key.toLowerCase();
+    let action;
+    let shellButton;
+    if (e.code === 'Space' && state.oskOpen && !state.lidClosed) {
+      const targetId = state.oskTargetId;
+      shellButton = document.querySelector('.start-btn');
+      action = () => {
+        if (state.oskOpen && !state.lidClosed && state.oskTargetId === targetId) dispatchHardware('START');
+      };
+    } else if (inText) {
+      if (target.id === 'catSearchInput' && key === 'escape') {
+        action = () => state.oskOpen ? handleOskKeypad('B') : closeCatalogSearch(true);
+      } else if (target.id === 'catSearchInput' && key === 'enter') {
+        action = () => {
           closeOsk(false);
-          e.target.blur();
+          target.blur();
           if (!state.searchQuery.trim()) state.searchOpen = false;
           state.inMinusOne = false;
           syncMinusOneBarUI();
           if (activeVirtualRender) activeVirtualRender(true);
           else if (state.tab === 'playlists') renderCatalog();
-        }
-        return;
+        };
+      } else if (target.id === 'newPlaylistInput' && key === 'escape' && state.oskOpen) {
+        action = () => closeOsk(true);
+      } else if (target.id === 'newPlaylistInput' && key === 'enter') {
+        action = () => {
+          closeOsk(false);
+          $c('#btnCreateAndAddPl').click();
+        };
       }
-      if (e.target.id === 'newPlaylistInput') {
-        if (e.key === 'Escape' && state.oskOpen) { e.preventDefault(); closeOsk(true); return; }
-        if (e.key === 'Enter') { e.preventDefault(); closeOsk(false); $c('#btnCreateAndAddPl').click(); }
+    } else if (Object.hasOwn(keyboardButtons, key)) {
+      const button = keyboardButtons[key];
+      shellButton = document.querySelector(`[data-hw="${button}"]`);
+      action = () => dispatchHardware(button);
+    } else if (key === 'l') {
+      action = toggleLid;
+    } else if (key === 'escape') {
+      action = () => {
+        document.getElementById('helpModal').hidden = true;
+        closeAllSheets(true);
+      };
+    } else if (key === '/' && isCatalogTab(state.tab) && !state.detailStack.length && !activeSheetType() && !state.inSettings) {
+      action = openCatalogSearch;
+    }
+    if (action) {
+      e.preventDefault();
+      if (!e.repeat) {
+        shellButton?.classList.add('pressed');
+        heldKeyboardActions.set(e.code, { target, shellButton, action });
       }
-      return;
-    }
-    if (e.key === '/' && isCatalogTab(state.tab) && !state.detailStack.length && !activeSheetType() && !state.inSettings) {
-      e.preventDefault();
-      openCatalogSearch();
-      return;
-    }
-    const key = e.key.toLowerCase();
-    if (e.code === 'Space') { e.preventDefault(); dispatchHardware('START'); }
-    else if (e.key === 'Tab') { e.preventDefault(); dispatchHardware('SELECT'); }
-    else if (key === 'c') dispatchHardware('X');
-    else if (key === 'q') dispatchHardware('L1');
-    else if (key === 'e') dispatchHardware('R1');
-    else if (key === '1') dispatchHardware('L2');
-    else if (key === '2') dispatchHardware('R2');
-    else if (key === 'z' || e.key === 'Enter') { e.preventDefault(); dispatchHardware('A'); }
-    else if (key === 'x' || e.key === 'Backspace') { e.preventDefault(); dispatchHardware('B'); }
-    else if (key === 'v') dispatchHardware('Y');
-    else if (key === 'd') dispatchHardware('AUX1');
-    else if (key === 'h') dispatchHardware('AUX2');
-    else if (key === 'l') toggleLid();
-    else if (e.key === 'ArrowUp') { e.preventDefault(); dispatchHardware('UP'); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); dispatchHardware('DOWN'); }
-    else if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      if (isPlayDirectMode()) { if (!e.repeat) startPlayDirHold('LEFT'); }
-      else dispatchHardware('LEFT');
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      if (isPlayDirectMode()) { if (!e.repeat) startPlayDirHold('RIGHT'); }
-      else dispatchHardware('RIGHT');
-    } else if (e.key === 'Escape') {
-      document.getElementById('helpModal').hidden = true;
-      closeAllSheets(true);
     }
   });
+
   document.addEventListener('keyup', (e) => {
     if (e.key === 'ArrowLeft') endPlayDirHold('LEFT', false);
     else if (e.key === 'ArrowRight') endPlayDirHold('RIGHT', false);
+    const held = heldKeyboardActions.get(e.code);
+    if (held) {
+      heldKeyboardActions.delete(e.code);
+      held.shellButton?.classList.remove('pressed');
+      if (e.target === held.target) held.action();
+    }
   });
+
   window.addEventListener('blur', () => {
     if (playHoldBtn) endPlayDirHold(playHoldBtn, true);
+    for (const held of heldKeyboardActions.values()) held.shellButton?.classList.remove('pressed');
+    heldKeyboardActions.clear();
+    if (volumePointer !== null) {
+      volumePointer = null;
+      scheduleVolumePopupHide();
+    }
   });
 
   function updateClock() {

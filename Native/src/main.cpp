@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -170,6 +171,46 @@ SDL_Keycode controllerKey(SDL_Gamepad* pad, Uint8 button)
     }
 }
 
+std::filesystem::path clockSettingsPath()
+{
+    const std::unique_ptr<char, decltype(&SDL_free)> directory(SDL_GetPrefPath("DeckDS", "DeckDS"), SDL_free);
+    if (!directory) {
+        SDL_Log("Cannot find the settings directory: %s", SDL_GetError());
+        return {};
+    }
+    return std::filesystem::path(directory.get()) / "clock.conf";
+}
+
+void loadClockSettings(const std::filesystem::path& path, DeckUi& app)
+{
+    std::ifstream settings(path);
+    int hours = 0, offset = 0;
+    if (!(settings >> hours >> offset) || (hours != 12 && hours != 24) || offset < 0 || offset >= 24 * 60)
+        return;
+    settings >> std::ws;
+    if (settings.eof()) {
+        app.clock24h = hours == 24;
+        app.clockOffsetMinutes = offset;
+    }
+}
+
+void saveClockSettings(const std::filesystem::path& path, const DeckUi& app)
+{
+    auto temporary = path;
+    temporary += "." + std::to_string(SDL_rand_bits()) + ".tmp";
+    const auto settings = std::string(app.clock24h ? "24 " : "12 ") + std::to_string(app.clockOffsetMinutes) + '\n';
+    std::error_code error;
+    if (SDL_SaveFile(temporary.string().c_str(), settings.data(), settings.size())) {
+        std::filesystem::rename(temporary, path, error);
+        if (!error)
+            return;
+        SDL_Log("Cannot replace clock settings: %s", error.message().c_str());
+    } else {
+        SDL_Log("Cannot write clock settings: %s", SDL_GetError());
+    }
+    std::filesystem::remove(temporary, error);
+}
+
 int run(bool separate, bool kiosk)
 {
     const char* base = SDL_GetBasePath();
@@ -179,6 +220,10 @@ int run(bool separate, bool kiosk)
     }
     const auto fonts = std::filesystem::path(base) / "fonts";
     DeckUi app;
+    const auto clockPath = clockSettingsPath();
+    if (!clockPath.empty())
+        loadClockSettings(clockPath, app);
+    auto clockSettings = std::pair{app.clock24h, app.clockOffsetMinutes};
     std::vector<std::unique_ptr<Window>> windows;
     const SDL_DisplayID primary = SDL_GetPrimaryDisplay();
     if (separate) {
@@ -232,6 +277,7 @@ int run(bool separate, bool kiosk)
     bool running = true, enteringText = false;
     bool triggerLeft = false, triggerRight = false;
     Uint64 tick = SDL_GetTicksNS();
+    Uint64 nextBatteryPoll = 0;
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -329,6 +375,11 @@ int run(bool separate, bool kiosk)
                 break;
             }
         }
+        const auto currentClockSettings = std::pair{app.clock24h, app.clockOffsetMinutes};
+        if (!clockPath.empty() && currentClockSettings != clockSettings) {
+            saveClockSettings(clockPath, app);
+            clockSettings = currentClockSettings;
+        }
         if (app.textInput() != enteringText) {
             enteringText = app.textInput();
             if (enteringText) SDL_StartTextInput(textWindow);
@@ -342,6 +393,12 @@ int run(bool separate, bool kiosk)
         }
         const double dt = std::min((now - tick) / 1.e9, .1);
         tick = now;
+        if (now >= nextBatteryPoll) {
+            int percent = -1;
+            const auto powerState = SDL_GetPowerInfo(nullptr, &percent);
+            app.batteryPercent = powerState == SDL_POWERSTATE_NO_BATTERY ? 100 : percent;
+            nextBatteryPoll = now + 30'000'000'000ULL;
+        }
         app.update(dt);
         for (const auto& window : windows) {
             if (window->kind == Window::Pane::Both)

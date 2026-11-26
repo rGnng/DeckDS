@@ -65,10 +65,10 @@ public:
     void label(std::string_view text, Rect r, Size size, Color ink, Face type = Face::Display,
                Align align = Align::Left, bool strong = false, bool fadeOverflow = false, int weight = 0);
     float textWidth(std::string_view text, Size size, Face type = Face::Display, bool strong = false);
+    // A zero pixel size uses the SVG at the requested rectangle in every theme.
     void icon(std::string_view name, Rect target, Color tint, int pixelSize = 32);
     void art(const Track* track, Rect target, float corner = 0);
     void vuDial(Rect area);
-    void phosphor(Rect area);
     void texture(SDL_Texture* texture, Rect target, float opacity = 1);
 
 private:
@@ -85,6 +85,5 @@ private:
     void roundedTexture(SDL_Texture* texture, Rect area, float corner);
     std::map<std::tuple<std::string_view, std::array<std::string_view, 3>, Theme, int, int>, SDL_Texture*> artCache;
     std::array<SDL_Texture*, 2> vuDials{};
-    SDL_Texture* phosphorMask = nullptr;
     SDL_Texture* iconTexture(std::string_view name, int pixels);
 };

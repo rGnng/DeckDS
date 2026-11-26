@@ -31,10 +31,17 @@
   font-style: normal;
   font-display: swap;
 }
+@font-face {
+  font-family: 'M PLUS 1p';
+  src: url('fonts/MPLUS1p-Regular.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 :root {
-  --font-display: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+  --font-display: 'Space Grotesk', 'M PLUS 1p', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'M PLUS 1p', ui-monospace, SFMono-Regular, monospace;
 
   /* Strict 5-Step Hardware Type Scale (4.3" / 1024×768 / 11.72 px/mm) */
   --t-display: 48px;  /* 4.1 mm — Hero stage titles, scrubber popup */
@@ -658,8 +665,7 @@ html[data-theme="vfd"] .cat-header-count,
 html[data-theme="vfd"] .sort-pill-btn,
 html[data-theme="vfd"] .cat-act-btn,
 html[data-theme="vfd"] .detail-act-btn,
-html[data-theme="vfd"] .pl-count-badge,
-html[data-theme="vfd"] .album-list-row .album-card-count,
+html[data-theme="vfd"] :is(.album-list-row, .playlist-row) .album-card-count,
 html[data-theme="vfd"] .cover-time,
 html[data-theme="vfd"] .sheet-sub,
 html[data-theme="vfd"] .sheet-btn-val,
@@ -696,11 +702,8 @@ html[data-theme="vfd"] .pad-ic-lg,
 html[data-theme="vfd"] .transport-ic { width: 48px; height: 48px; }
 html[data-theme="vfd"] .transport-ic.hero-ic { width: 64px; height: 64px; }
 
-/* Keep Album Covers Crisp Full-Resolution (Exempt from VFD Pixelation & Mesh!) */
-html[data-theme="vfd"] .album-frame {
-  image-rendering: auto;
-  z-index: 32;
-}
+/* Keep album artwork at full resolution. */
+html[data-theme="vfd"] .album-frame,
 html[data-theme="vfd"] .album-frame canvas,
 html[data-theme="vfd"] .album-grid-art,
 html[data-theme="vfd"] .album-list-art,
@@ -840,7 +843,6 @@ html[data-theme="vfd"] .sheet-big-btn,
 html[data-theme="vfd"] .picker-row,
 html[data-theme="vfd"] .info-cell,
 html[data-theme="vfd"] .seg-btn,
-html[data-theme="vfd"] .btn-keycap,
 html[data-theme="vfd"] .waveform-canvas-wrap {
   border-radius: 2px;
 }
@@ -865,30 +867,6 @@ html[data-theme="vfd"] .cover-progress-fill {
     transparent 14px
   );
   box-shadow: 0 0 10px var(--accent-glow);
-}
-html[data-theme="vfd"] .ds-screen::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  /* Strict Integer 1px/1px on 2px VFD Anode Dot Mask (ZERO fractional px!) */
-  background-image:
-    repeating-linear-gradient(
-      0deg,
-      rgba(0, 0, 0, 0.34) 0px,
-      rgba(0, 0, 0, 0.34) 1px,
-      transparent 1px,
-      transparent 2px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      rgba(0, 0, 0, 0.3) 0px,
-      rgba(0, 0, 0, 0.3) 1px,
-      transparent 1px,
-      transparent 2px
-    ),
-    radial-gradient(ellipse at 50% 50%, transparent 62%, rgba(0, 0, 0, 0.42) 100%);
-  z-index: 30;
 }
 
 /* ==========================================================================
@@ -1347,10 +1325,12 @@ html[data-theme="vfd"] .deck-tab.active {
   font-family: var(--font-mono);
   font-size: var(--t-body);
   font-weight: 700;
+  white-space: nowrap;
 }
 .wf-icon-btn {
-  width: 56px;
+  width: 84px;
   height: 48px;
+  padding: 0;
   border-radius: 12px;
   background: var(--bg-elev);
   border: 2px solid var(--border-strong);
@@ -1360,6 +1340,7 @@ html[data-theme="vfd"] .deck-tab.active {
   justify-content: center;
   cursor: pointer;
 }
+#btnOpenSettings { width: 100px; }
 .time-current { color: var(--accent); }
 .time-slash, .time-total { color: var(--text-muted); }
 
@@ -1446,44 +1427,20 @@ html[data-theme="vfd"] .tactile-btn.hero-play::after {
   box-shadow: 0 0 8px var(--accent-glow);
 }
 
-/* Inline Nintendo-Style Hardware Keycap Badges stamped directly on buttons */
-.has-keycap {
-  position: relative;
+/* Hardware keycaps */
+.deck-shortcut { gap: 8px; }
+.deck-shortcut-keycap {
+  flex: none;
+  color: var(--text-dim);
 }
-.btn-keycap {
+#btnCycleStage .deck-shortcut-keycap {
   position: absolute;
   top: 6px;
   right: 6px;
-  min-width: 28px;
-  height: 26px;
-  padding: 0 8px;
-  border-radius: 7px;
-  background: var(--bg);
-  border: 2px solid var(--border-strong);
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: var(--t-cap);
-  font-weight: 700;
-  line-height: 22px;
-  text-align: center;
-  pointer-events: none;
 }
-.wf-icon-btn .btn-keycap {
-  top: -10px;
-  right: -8px;
-  font-size: var(--t-cap);
-  height: 24px;
-  line-height: 20px;
-}
-.btn-keycap.on-accent {
-  background: rgba(0, 0, 0, 0.24);
-  border-color: rgba(0, 0, 0, 0.35);
-  color: var(--accent-ink);
-  top: 12px;
-  right: 12px;
-  min-width: 32px;
-  height: 30px;
-  line-height: 26px;
+html[data-theme="vfd"] .ds-screen .deck-shortcut-keycap {
+  shape-rendering: geometricPrecision;
+  filter: none;
 }
 
 /* Single-Line Volume Bar: Mute Button | Slider | Level | Output Select */
@@ -2496,15 +2453,6 @@ html[data-theme="vfd"] .view-mode-btn.active {
   font-size: var(--t-title);
   color: var(--accent);
 }
-.pl-count-badge {
-  font-family: var(--font-mono);
-  font-size: var(--t-sub);
-  font-weight: 700;
-  color: var(--text-dim);
-  text-align: right;
-  white-space: nowrap;
-}
-
 .lib-items.albums-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -2621,7 +2569,7 @@ html[data-theme="vfd"] .view-mode-btn.active {
   display: block;
   flex-shrink: 0;
 }
-.album-list-row .album-card-count {
+:is(.album-list-row, .playlist-row) .album-card-count {
   margin-top: 0;
   font-size: var(--t-sub);
   padding: 4px 14px;

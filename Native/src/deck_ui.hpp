@@ -2,6 +2,7 @@
 
 #include "stage.hpp"
 
+#include <functional>
 #include <optional>
 
 enum class PreviewScale { Fit, Integer, Studio, PixelOne, PixelTwo, Count };
@@ -15,6 +16,7 @@ public:
     std::array<int, 3> themeAccents{0, 0, 0};
     bool clock24h = true;
     int clockOffsetMinutes = 0;
+    int batteryPercent = 100;
     Player player;
     bool lid = false;
     bool showKeys = false;
@@ -84,6 +86,9 @@ private:
     Tab tab = Tab::Deck;
     int stage = 0, outgoingStage = 0;
     float stageTime = 1, tabTime = 1;
+    // The first phase moves the upper strip. The second phase reveals the lower waveform.
+    float deckProgressTransition = 2.f;
+    float stageCentering = 1.f;
     std::array<float, 6> tabWidths{260, 108, 108, 108, 108, 108};
     std::array<float, 6> tabStart = tabWidths;
     std::array<Rect, 6> tabRects{};
@@ -96,7 +101,7 @@ private:
     bool pocket = true, albumsInGrid = true;
     bool screenOff = false, poweredOff = false, powerDown = false, powerLong = false;
     double powerTime = 0;
-    float volumeTime = 0, seekPopup = 0;
+    float volumeTime = 0;
     SortField sortField = SortField::Added;
     bool ascending = false;
     std::array<SortField, 6> sortFields{
@@ -122,7 +127,11 @@ private:
     float releaseTime = 0, pressTime = 0, keyPressTime = 0;
     float pointerStartX = 0, pointerStartY = 0, pointerLastX = 0, pointerLastY = 0;
     std::string_view pressVoice;
-    std::map<SDL_Keycode, std::string_view> heldKeyVoices;
+    struct HeldKey {
+        std::string_view voice;
+        std::function<void()> onRelease;
+    };
+    std::map<SDL_Keycode, HeldKey> heldKeys;
     std::map<SDL_Keycode, std::pair<Action, int>> heldKeyUi;
     bool dragging = false, held = false, listPointer = false, settingsPointer = false;
     int seekDirection = 0;

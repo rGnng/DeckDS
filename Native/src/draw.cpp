@@ -112,8 +112,6 @@ Draw::Draw(SDL_Renderer* target, std::filesystem::path directory)
 
 Draw::~Draw()
 {
-    if (phosphorMask)
-        SDL_DestroyTexture(phosphorMask);
     for (const auto& entry : artCache)
         SDL_DestroyTexture(entry.second);
     for (auto* texture : vuDials)
@@ -364,10 +362,12 @@ TTF_Font* Draw::font(Face type, Size size, int weight)
             const auto fbKey = std::tuple(isVfd, size);
             auto alternate = fallbackFonts.find(fbKey);
             if (alternate == fallbackFonts.end()) {
-                const int fbSize = isVfd ? pixel[index] : static_cast<int>(std::lround(standard[index] * 0.92f));
-                auto* fb = TTF_OpenFont((fontPath / "DotGothic16-Regular.ttf").string().c_str(), fbSize);
-                if (fb && isVfd)
-                    TTF_SetFontHinting(fb, TTF_HINTING_MONO);
+                const char* fallback = isVfd ? "DotGothic16-Regular.ttf" : "MPLUS1p-Regular.ttf";
+                auto* fb = TTF_OpenFont((fontPath / fallback).string().c_str(), isVfd ? pixel[index] : standard[index]);
+                if (fb)
+                    TTF_SetFontHinting(fb, isVfd ? TTF_HINTING_MONO : TTF_HINTING_NONE);
+                else
+                    SDL_Log("Cannot load fallback font %s: %s", fallback, SDL_GetError());
                 alternate = fallbackFonts.emplace(fbKey, fb).first;
             }
             if (alternate->second)
@@ -560,13 +560,14 @@ SDL_Texture* Draw::iconTexture(std::string_view name, int pixels)
 
 void Draw::icon(std::string_view name, Rect r, Color tint, int pixelSize)
 {
-    auto* value = iconTexture(name, vfd() ? pixelSize : 0);
+    const int pixels = vfd() ? pixelSize : 0;
+    auto* value = iconTexture(name, pixels);
     if (!value)
         return;
-    if (vfd()) {
-        r.x += even((r.w - pixelSize) / 2);
-        r.y += even((r.h - pixelSize) / 2);
-        r.w = r.h = static_cast<float>(pixelSize);
+    if (pixels) {
+        r.x += even((r.w - pixels) / 2);
+        r.y += even((r.h - pixels) / 2);
+        r.w = r.h = static_cast<float>(pixels);
     }
     SDL_SetTextureColorMod(value, tint.r, tint.g, tint.b);
     texture(value, r, tint.a / 255.f);
@@ -714,55 +715,6 @@ void Draw::artwork(const Track* track, Rect r)
         circle(x(.68f), y(.66f), r.w * .21f, a);
         rect({x(.14f), y(.78f), r.w * .34f, r.h * .045f}, c);
     }
-}
-
-void Draw::phosphor(Rect area)
-{
-    if (!vfd() || area.w <= 0 || area.h <= 0)
-        return;
-    if (!phosphorMask) {
-        constexpr int W = 1024, H = 768;
-        if (auto* surface = SDL_CreateSurface(W, H, SDL_PIXELFORMAT_RGBA32)) {
-            auto* pixels = static_cast<Uint8*>(surface->pixels);
-            for (int y = 0; y < H; ++y) {
-                const float ny = (y + 0.5f - H * 0.5f) / (H * 0.5f);
-                const bool hLine = (y & 1) == 0;
-                auto* row = pixels + y * surface->pitch;
-                for (int x = 0; x < W; ++x) {
-                    const float nx = (x + 0.5f - W * 0.5f) / (W * 0.5f);
-                    const bool vLine = (x & 1) == 0;
-                    const float dist = std::hypot(nx, ny);
-                    const float vig = dist > 0.62f ? std::clamp((dist - 0.62f) / 0.38f, 0.f, 1.f) * 0.42f : 0.f;
-                    // Combine horizontal (0.34), vertical (0.30), and radial vignette over-blend
-                    float pass = 1.f;
-                    if (hLine) pass *= (1.f - 0.34f);
-                    if (vLine) pass *= (1.f - 0.30f);
-                    pass *= (1.f - vig);
-                    const Uint8 a = static_cast<Uint8>(std::lround((1.f - pass) * 255.f));
-                    row[x * 4 + 0] = 0;
-                    row[x * 4 + 1] = 0;
-                    row[x * 4 + 2] = 0;
-                    row[x * 4 + 3] = a;
-                }
-            }
-            phosphorMask = SDL_CreateTextureFromSurface(renderer, surface);
-            SDL_DestroySurface(surface);
-            if (phosphorMask) {
-                SDL_SetTextureBlendMode(phosphorMask, SDL_BLENDMODE_BLEND);
-                SDL_SetTextureScaleMode(phosphorMask, SDL_SCALEMODE_NEAREST);
-            }
-        }
-    }
-    if (!phosphorMask)
-        return;
-    const Rect clipped{
-        std::clamp(area.x, 0.f, 1024.f),
-        std::clamp(area.y, 0.f, 768.f),
-        std::clamp(area.x + area.w, 0.f, 1024.f) - std::clamp(area.x, 0.f, 1024.f),
-        std::clamp(area.y + area.h, 0.f, 768.f) - std::clamp(area.y, 0.f, 768.f),
-    };
-    if (clipped.w > 0 && clipped.h > 0)
-        SDL_RenderTexture(renderer, phosphorMask, &clipped, &clipped);
 }
 
 void Draw::texture(SDL_Texture* value, Rect target, float opacity)

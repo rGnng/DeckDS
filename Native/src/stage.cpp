@@ -234,19 +234,21 @@ void Meter::update(const Player& player, double dt)
     }
 }
 
-void drawStage(Draw& d, const Player& player, const Meter& meter, int stage)
+void drawStage(Draw& d, const Player& player, const Meter& meter, int stage, float stageCentering)
 {
     const auto& p = d.p();
     d.clear(p.bg);
     if (stage == 0) {
+        constexpr float centeredCoverY = (64.f + 768.f - topArt.h) / 2;
+        const float offsetY = even((centeredCoverY - topArt.y) * stageCentering);
         if (const auto* track = player.track()) {
             if (!d.vfd())
-                d.glow(302, 382, 730, alpha(color(track->colors[0]), .20f), alpha(color(track->colors[1]), .18f));
-            d.label(track->title, {604, 310, 396, 54}, Size::Display, p.text, Face::Display, Align::Left, true, true, 700);
-            d.label(track->artist, {604, 382, 396, 38}, Size::Title, p.dim, Face::Display, Align::Left, false, true, 600);
-            d.label(track->album, {604, 438, 396, 32}, Size::Body, p.muted, Face::Display, Align::Left, false, true, 500);
+                d.glow(302, 382 + offsetY, 730, alpha(color(track->colors[0]), .20f), alpha(color(track->colors[1]), .18f));
+            d.label(track->title, {604, 310 + offsetY, 396, 54}, Size::Display, p.text, Face::Display, Align::Left, true, true, 700);
+            d.label(track->artist, {604, 382 + offsetY, 396, 38}, Size::Title, p.dim, Face::Display, Align::Left, false, true, 600);
+            d.label(track->album, {604, 435 + offsetY, 396, 38}, Size::Title, p.muted, Face::Display, Align::Left, false, true, 500);
         }
-        d.art(player.track(), topArt, d.vfd() ? 2.f : 24.f);
+        d.art(player.track(), {topArt.x, topArt.y + offsetY, topArt.w, topArt.h}, d.vfd() ? 2.f : 24.f);
     } else if (stage == 1) {
         vu(d, 24, meter.needle[0], meter.peak[0], "LEFT");
         vu(d, 522, meter.needle[1], meter.peak[1], "RIGHT");
@@ -255,47 +257,73 @@ void drawStage(Draw& d, const Player& player, const Meter& meter, int stage)
     }
 }
 
-void drawTopChrome(Draw& d, const Player& player, float dockTitle, bool exemptCoverArt,
-                   std::string_view clockText)
+void drawTopChrome(Draw& d, const Player& player, float dockTitle, std::string_view clockText,
+                   int batteryPercent, float progressSlide, float stageCentering)
 {
     const auto& p = d.p();
     const auto* track = player.track();
     d.rect({0, 0, 1024, 64}, p.elevated);
     d.rect({0, 62, 1024, 2}, p.border);
-    const float iconDim = d.vfd() ? 32.f : 24.f;
-    const float iconY = d.vfd() ? 16.f : 20.f;
+    constexpr float iconDim = 32.f;
+    constexpr float iconY = 16.f;
+    constexpr Size statusSize = Size::Body;
+    constexpr int statusWeight = 600;
+    constexpr float queueX = 68;
+    constexpr float gap = 18;
+    const auto statusWidth = [&](std::string_view text) {
+        return even(d.textWidth(text, statusSize, Face::Mono, false) + 4);
+    };
     d.icon(track ? player.playing ? "play" : "pause" : "stop", {24, iconY, iconDim, iconDim}, p.dim);
     const std::string queue = track ? twoDigits(static_cast<int>(player.history.size()) + 1) + " / " +
         twoDigits(static_cast<int>(player.history.size() + player.queue.size()) + 1) : "00 / 00";
-    d.label(queue, {68, 0, 106, 62}, Size::Sub, p.dim, Face::Mono, Align::Left, false, false, 600);
+    const float queueW = statusWidth(queue);
+    d.label(queue, {queueX, 0, queueW, 62}, statusSize, p.dim, Face::Mono, Align::Left, false, false, statusWeight);
 
-    const float clockW = std::max(68.f, even(d.textWidth(clockText, Size::Sub, Face::Mono, false) + 10.f));
+    const float clockW = std::max(68.f, statusWidth(clockText));
     const float clockX = 1000.f - clockW;
-    const float batX = clockX - 18.f - 36.f;
+    const float batX = clockX - gap - iconDim;
+    const float starX = batX - gap - iconDim;
     if (track) {
+        const bool starred = player.stars[player.current];
+        const float formatX = std::max(182.f, queueX + queueW + 12.f);
+        const float formatRight = (starred ? starX : batX) - gap;
         const auto codec = track->format.substr(0, track->format.find(' '));
         auto rate = std::string(track->rate);
         if (const auto zero = rate.find(".0 "); zero != std::string::npos)
             rate.erase(zero, 2);
-        d.label(std::string(codec) + " " + rate, {182, 0, 340, 62}, Size::Sub, p.dim, Face::Mono, Align::Left, false, false, 600);
-        if (player.stars[player.current])
-            d.icon("star-filled", {batX - 18.f - iconDim, iconY, iconDim, iconDim}, p.dim);
+        d.label(std::string(codec) + " " + rate, {formatX, 0, formatRight - formatX, 62},
+                statusSize, p.dim, Face::Mono, Align::Left, false, true, statusWeight);
+        if (starred)
+            d.icon("star-filled", {starX, iconY, iconDim, iconDim}, p.dim);
     }
-    d.frame({batX, 22, 32, 18}, d.vfd() ? 2 : 4, p.elevated, p.dim);
-    d.rect({batX + 32.f, 26, 4, 8}, p.dim);
-    if (d.vfd())
-        for (int i = 0; i < 4; ++i)
-            d.rect({batX + 4.f + 6 * i, 26, 4, 10}, p.dim);
-    else
-        d.round({batX + 4.f, 26, 22, 10}, 2, p.dim);
+    d.icon("battery", {batX, iconY, iconDim, iconDim}, p.dim, 0);
+    const int batterySteps = (std::clamp(batteryPercent, 0, 100) + 5) / 10;
+    // Bootstrap's full icon fills x=2 to 12 and y=6 to 10 in its 16 px viewBox.
+    if (batterySteps > 0)
+        d.rect({batX + 4, iconY + 12, 2.f * batterySteps, 8}, p.dim);
 
-    d.label(clockText, {clockX, 0, clockW, 62}, Size::Sub, p.dim, Face::Mono, Align::Right, false, false, 600);
-    if (track && dockTitle > 0)
-        d.label(track->title, {24, 656, 976, 48}, Size::Title, alpha(p.text, dockTitle), Face::Display, Align::Center, true, true);
+    d.label(clockText, {clockX, 0, clockW, 62}, statusSize, p.dim, Face::Mono, Align::Right, false, false, statusWeight);
+    if (track && dockTitle > 0) {
+        constexpr float meterAreaBottom = 632;
+        constexpr float titleHeight = 48;
+        constexpr float centeredTitleY = (meterAreaBottom + 768 - titleHeight) / 2;
+        const float titleY = even(std::lerp(656.f, centeredTitleY, stageCentering));
+        d.label(track->title, {24, titleY, 976, titleHeight}, Size::Title, alpha(p.text, dockTitle),
+                Face::Display, Align::Center, true, true);
+    }
 
-    const Rect rail{110, 722, 804, 12};
-    d.label(timecode(player.seconds), {24, 710, 66, 34}, Size::Sub, p.text, Face::Mono, Align::Left, false, false, 600);
-    d.label(timecode(track ? track->duration : 0), {934, 710, 66, 34}, Size::Sub, p.dim, Face::Mono, Align::Right, false, false, 600);
+    if (progressSlide >= 1.f)
+        return;
+
+    const std::string elapsed = timecode(player.seconds);
+    const std::string duration = timecode(track ? track->duration : 0);
+    const float timeWidth = std::max(66.f, even(2 + std::max(d.textWidth(elapsed, Size::Sub, Face::Mono, true),
+                                                             d.textWidth(duration, Size::Sub, Face::Mono, true))));
+    constexpr float dockY = 710;
+    const float y = dockY + even((768 - dockY) * progressSlide);
+    const Rect rail{44 + timeWidth, y + 12, 936 - 2 * timeWidth, 12};
+    d.label(elapsed, {24, y, timeWidth, 34}, Size::Sub, p.text, Face::Mono, Align::Left, false, false, 600);
+    d.label(duration, {1000 - timeWidth, y, timeWidth, 34}, Size::Sub, p.dim, Face::Mono, Align::Right, false, false, 600);
     d.frame(rail, d.vfd() ? 2 : 6, p.card, p.strong);
     const float filled = even((rail.w - 4) * player.progress());
     if (d.vfd()) {
@@ -304,22 +332,15 @@ void drawTopChrome(Draw& d, const Player& player, float dockTitle, bool exemptCo
     } else {
         d.round({rail.x + 2, rail.y + 2, filled, 8}, 4, p.accent);
     }
-    if (d.vfd()) {
-        if (exemptCoverArt) {
-            d.phosphor({0, 0, 1024, 118});
-            d.phosphor({0, 118, 24, 544});
-            d.phosphor({568, 118, 456, 544});
-            d.phosphor({0, 662, 1024, 106});
-        } else {
-            d.phosphor({0, 0, 1024, 768});
-        }
-    }
 }
 
-void drawWaveform(Draw& d, const Player& player, Rect area)
+void drawWaveform(Draw& d, const Player& player, Rect area, float reveal)
 {
     const auto& p = d.p();
     d.frame(area, d.vfd() ? 2 : 10, p.bg, p.border);
+    if (reveal <= 0.f)
+        return;
+
     const Rect r = inset(area, 2);
     const float center = r.y + r.h / 2;
     const auto* track = player.track();
@@ -327,12 +348,13 @@ void drawWaveform(Draw& d, const Player& player, Rect area)
     const float progress = player.progress();
     if (d.vfd()) {
         const int columns = static_cast<int>(r.w / 8), rows = static_cast<int>(r.h / 8);
+        const int firstRow = std::min((rows - 1) / 2, static_cast<int>(std::ceil((1 - reveal) * rows / 2)));
         const float middle = (rows - 1) / 2.f;
         const int cursor = std::min(columns - 1, static_cast<int>(progress * columns));
         for (int column = 0; column < columns; ++column) {
             const int source = column * static_cast<int>(wave.size()) / columns;
             const float span = std::max(1.f, std::round(wave[source] * rows * .46f));
-            for (int row = 0; row < rows; ++row) {
+            for (int row = firstRow; row < rows - firstRow; ++row) {
                 const float distance = std::abs(row - middle);
                 Color dot = mix(p.bg, p.wave, .45f);
                 if (track) {
@@ -353,10 +375,11 @@ void drawWaveform(Draw& d, const Player& player, Rect area)
     constexpr int bars = 80;
     const float pitch = r.w / bars;
     for (int i = 0; i < bars; ++i) {
-        const float amplitude = std::max(12.f, wave[i * 2] * (r.h - 20));
+        const float amplitude = std::max(12.f, wave[i * 2] * (r.h - 20)) * reveal;
         d.round({r.x + 2 + i * pitch, center - amplitude / 2, std::max(5.f, pitch - 4), amplitude},
                 3, i / 80.f <= progress ? p.accent : p.wave);
     }
     const float playhead = std::clamp(r.x + r.w * progress - 2.5f, r.x, r.x + r.w - 5);
-    d.rect({playhead, r.y + 4, 5, r.h - 8}, p.text);
+    const float playheadH = (r.h - 8) * reveal;
+    d.rect({playhead, center - playheadH / 2, 5, playheadH}, p.text);
 }

@@ -162,14 +162,18 @@ def main():
     js = design / "audio-engine.js"
     source = js.read_text(encoding="utf-8")
     library = reference_library(sys.argv[3], js)
+    icons = svg_icons((design / "index.html").read_text(encoding="utf-8"))
+    for icon in map(Path, sys.argv[4:]):
+        svg = icon.read_text(encoding="utf-8").strip()
+        icons.append("{" + cpp(icon.stem) + ', R"decksvg(' + svg + ')decksvg"}')
     output.write_text(
-        "// Generated from the DeckDS browser reference.\n" +
+        "// Generated DeckDS assets.\n" +
         f"inline constexpr int defaultLibrarySize = {library['defaultSize']};\n" +
         array("Track", "demoTracks", track_rows(library["tracks"], source)) +
         array("SfxAsset", "sfxAssets", sound_rows(source)) +
         array("KeyAsset", "keyAssets", keyboard_rows(sys.argv[3], design / "app.js")) +
         array("PlaylistFixture", "demoPlaylists", playlist_rows(source)) +
-        array("IconAsset", "svgAssets", svg_icons((design / "index.html").read_text(encoding="utf-8"))) +
+        array("IconAsset", "svgAssets", icons) +
         array("PixelAsset", "pixelAssets", vfd_icons(sys.argv[3], design / "vfd-icons.js")),
         encoding="utf-8",
     )

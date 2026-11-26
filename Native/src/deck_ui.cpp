@@ -35,6 +35,18 @@ enum TrackOptId {
 constexpr Rect fullPanel{0, 0, 1024, 768};
 constexpr Rect railBox{944, 0, 64, 0};
 constexpr int keyColumns = 10;
+constexpr float progressPhaseSeconds = .080f;
+constexpr float stageCenteringSeconds = .050f;
+constexpr float listRowHeight = 116.f;
+constexpr float listRowGap = 12.f;
+constexpr float listTitleHeight = 44.f;
+constexpr float listSubtitleHeight = 36.f;
+
+float rowTextTop(Rect row, bool hasSubtitle)
+{
+    const float height = listTitleHeight + (hasSubtitle ? listSubtitleHeight : 0.f);
+    return row.y + (row.h - height) / 2;
+}
 
 const KeyAsset* referenceKey(bool symbols, int position)
 {
@@ -204,6 +216,17 @@ void DeckUi::update(double dt)
         }
     }
 
+    const float progressStep = step / progressPhaseSeconds;
+    if (tab == Tab::Deck) {
+        const float slideRemaining = std::max(0.f, 1.f - deckProgressTransition) * progressPhaseSeconds;
+        deckProgressTransition = std::min(2.f, deckProgressTransition + progressStep);
+        const float timeAfterSlide = std::max(0.f, step - slideRemaining);
+        stageCentering = std::min(1.f, stageCentering + timeAfterSlide / stageCenteringSeconds);
+    } else {
+        deckProgressTransition = std::max(0.f, std::min(1.f, deckProgressTransition) - progressStep);
+        stageCentering = std::max(0.f, stageCentering - step / stageCenteringSeconds);
+    }
+
     if (scroll > 16.f && utility && !toolFocus && query.empty() && input == Input::None)
         utility = false;
 
@@ -239,7 +262,6 @@ void DeckUi::update(double dt)
     }
 
     volumeTime = std::max(0.f, volumeTime - step);
-    seekPopup = std::max(0.f, seekPopup - step);
     railPopup = std::max(0.f, railPopup - step);
     noticeTime = std::max(0.f, noticeTime - step);
     releaseTime = std::max(0.f, releaseTime - step);
@@ -253,20 +275,15 @@ void DeckUi::update(double dt)
         if ((pressed->action == Action::Previous || pressed->action == Action::Next) && pressTime >= .32f) {
             held = true;
             player.seekSeconds((pressed->action == Action::Previous ? -1 : 1) * step * 16);
-            seekPopup = .55f;
         }
     }
     if (seekDirection != 0) {
         seekHold += step;
-        if (seekHold >= .32f) {
+        if (seekHold >= .32f)
             player.seekSeconds(seekDirection * step * 16);
-            seekPopup = .55f;
-        }
     }
-    if (std::abs(analogPosition) > .25f && tab == Tab::Deck && sheet == Sheet::None && !displaysOff()) {
+    if (std::abs(analogPosition) > .25f && tab == Tab::Deck && sheet == Sheet::None && !displaysOff())
         player.seekSeconds(analogPosition * step * 20);
-        seekPopup = .55f;
-    }
 }
 
 void DeckUi::upper(Draw& d, SDL_Texture* fadeLayer)
@@ -281,16 +298,17 @@ void DeckUi::upper(Draw& d, SDL_Texture* fadeLayer)
     if (stageTime < 1 && fadeLayer && stage != outgoingStage) {
         auto* target = SDL_GetRenderTarget(d.renderer);
         SDL_SetRenderTarget(d.renderer, fadeLayer);
-        drawStage(d, player, meter, stage);
+        drawStage(d, player, meter, stage, stageCentering);
         SDL_SetRenderTarget(d.renderer, target);
-        drawStage(d, player, meter, outgoingStage);
+        drawStage(d, player, meter, outgoingStage, stageCentering);
         const float fade = stageTime * stageTime * (3 - 2 * stageTime);
         d.texture(fadeLayer, fullPanel, fade);
         title = std::lerp(outgoingStage != 0 ? 1.f : 0.f, title, fade);
     } else {
-        drawStage(d, player, meter, stage);
+        drawStage(d, player, meter, stage, stageCentering);
     }
-    drawTopChrome(d, player, title, stage == 0, clockString());
+    drawTopChrome(d, player, title, clockString(), batteryPercent, std::min(1.f, deckProgressTransition),
+                  stageCentering);
     d.rect(fullPanel, alpha(color(0x000000), 1 - backlight()));
 }
 
@@ -307,7 +325,6 @@ void DeckUi::lower(Draw& d)
     tabs(d);
     if (tab == Tab::Deck) {
         transport(d);
-        d.phosphor(fullPanel);
     } else {
         catalog(d);
         if (keyboardHeight > 1 && sheet == Sheet::None)
@@ -450,6 +467,8 @@ void DeckUi::tabs(Draw& d)
     d.rect({0, 74, 1024, 2}, p.border);
     const int current = static_cast<int>(tab);
     const int visualTab = tabSliding ? slideTab : current;
+    constexpr float iconSize = 32.f;
+    constexpr float iconGap = 8.f;
     button(d, {16, 12, 64, 52}, Action::Tab, current - 1, {}, "L1", false, false, 32,
            current > 0 ? p.card : p.elevated, current > 0 ? p.dim : alpha(p.dim, .35f));
     button(d, {944, 12, 64, 52}, Action::Tab, current + 1, {}, "R1", false, false, 32,
@@ -473,17 +492,18 @@ void DeckUi::tabs(Draw& d)
                     (isSlipFocus || d.vfd()) ? p.accent : p.strong);
             const float textW = std::min(d.textWidth(tabLabel, Size::Sub, Face::Display, true), vr.w - 60);
             const float showText = vr.w >= 170;
-            const float ix = vr.x + even((vr.w - (showText ? 34 + 8 + textW : 34.f)) / 2);
-            d.icon(tabIcons[i], {ix, vr.y + even((vr.h - 34) / 2), 34, 34}, p.accent, 32);
+            const float ix = vr.x + even((vr.w - (showText ? iconSize + iconGap + textW : iconSize)) / 2);
+            d.icon(tabIcons[i], {ix, vr.y + (vr.h - iconSize) / 2, iconSize, iconSize}, p.accent);
             if (showText) {
                 const float fade = std::clamp((vr.w - 170.f) / 70.f, 0.f, 1.f);
-                d.label(tabLabel, {ix + 42, vr.y, textW + 4, vr.h}, Size::Sub, alpha(p.text, fade),
+                d.label(tabLabel, {ix + iconSize + iconGap, vr.y, textW + 4, vr.h}, Size::Sub, alpha(p.text, fade),
                         Face::Display, Align::Left, true);
             }
         } else {
             if (amount > .01f)
                 d.frame(vr, d.vfd() ? 2 : 14, p.elevated, p.accent);
-            d.icon(tabIcons[i], {vr.x + even((vr.w - 34) / 2), vr.y + even((vr.h - 34) / 2), 34, 34}, p.dim, 32);
+            d.icon(tabIcons[i], {vr.x + even((vr.w - iconSize) / 2), vr.y + (vr.h - iconSize) / 2,
+                               iconSize, iconSize}, p.dim);
         }
         x += tabWidths[i] + 8;
     }
@@ -495,11 +515,22 @@ void DeckUi::transport(Draw& d)
     const auto* track = player.track();
 
     d.frame({16, 92, 992, 240}, d.vfd() ? 2 : 16, p.card, p.border);
+    const std::string elapsed = timecode(player.seconds);
+    const std::string duration = timecode(track ? track->duration : 0);
+    const std::string total = "/ " + duration;
+    const float elapsedW = even(2 + std::max(d.textWidth(elapsed, Size::Body, Face::Mono, true),
+                                             d.textWidth(duration, Size::Body, Face::Mono, true)));
+    const float totalW = even(2 + d.textWidth(total, Size::Body, Face::Mono, true));
+    const float totalX = 778 - totalW;
+    const float elapsedX = totalX - 12 - elapsedW;
+    constexpr float titleX = 38;
     if (track)
-        d.label(track->title, {38, 108, 532, 48}, Size::Body, p.text, Face::Display, Align::Left, true, true);
-    d.label(timecode(player.seconds), {580, 108, 78, 48}, Size::Body, p.accent, Face::Mono, Align::Right, true);
-    d.label("/ " + timecode(track ? track->duration : 0), {670, 108, 108, 48}, Size::Body, p.muted, Face::Mono, Align::Left, true);
-    const auto headerPill = [&](Rect r, Action act, int data, std::string_view glyph, std::string_view keycap, float capW) {
+        d.label(track->title, {titleX, 108, elapsedX - titleX - 12, 48}, Size::Body, p.text,
+                Face::Display, Align::Left, true, true);
+    d.label(elapsed, {elapsedX, 108, elapsedW, 48}, Size::Body, p.accent, Face::Mono, Align::Right, true);
+    d.label(total, {totalX, 108, totalW, 48}, Size::Body, p.muted, Face::Mono, Align::Right, true);
+    const auto shortcutButton = [&](Rect r, Action act, int data, std::string_view glyph, std::string_view keycap,
+                                    float keycapWidth, int iconSize, int vfdSize, Color fill, int corner) {
         hit(r, act, data);
         const bool down = (pressed && pressed->action == act && pressed->data == data && !dragging) ||
                           isUiHeld(act, data);
@@ -507,23 +538,27 @@ void DeckUi::transport(Draw& d)
         const float dx = even(.06f * amount * r.w / 2);
         const float dy = even(.06f * amount * r.h / 2);
         r = {r.x + dx, r.y + dy, r.w - 2 * dx, r.h - 2 * dy};
+        const float radius = d.vfd() ? 2.f : static_cast<float>(corner);
         if (amount > .01f)
-            d.strokeRound(inset(r, -4), d.vfd() ? 6 : 16, p.soft, 4);
-        d.frame(r, d.vfd() ? 2 : 12, down ? p.raised : p.elevated, down ? p.accent : p.strong);
-        d.icon(glyph, {r.x + 12, r.y + even((r.h - 24) / 2), 24, 24}, p.text, 32);
-        const Rect cap{r.x + r.w - capW - 10, r.y + even((r.h - 24) / 2), capW, 24};
-        d.frame(cap, d.vfd() ? 2 : 6, p.bg, p.border);
-        d.label(keycap, cap, Size::Caption, p.dim, Face::Mono, Align::Center, true);
+            d.strokeRound(inset(r, -4), radius + 4, p.soft, 4);
+        d.frame(r, radius, down ? mix(fill, p.raised, .55f) : fill, down ? p.accent : p.strong);
+
+        constexpr float gap = 8;
+        constexpr float keycapHeight = 26;
+        const float size = static_cast<float>(d.vfd() ? vfdSize : iconSize);
+        const bool cornerKeycap = act == Action::Stage;
+        const float contentWidth = cornerKeycap ? size : size + gap + keycapWidth;
+        const float x = r.x + (r.w - contentWidth) / 2;
+        d.icon(glyph, {x, r.y + (r.h - size) / 2, size, size}, p.text, vfdSize);
+        const Rect keycapBox = cornerKeycap
+            ? Rect{r.x + r.w - keycapWidth - gap, r.y + gap, keycapWidth, keycapHeight}
+            : Rect{x + size + gap, r.y + (r.h - keycapHeight) / 2, keycapWidth, keycapHeight};
+        d.icon(keycap, keycapBox, p.dim, 0);
     };
-    headerPill({790, 108, 84, 48}, Action::Context, player.current, "more", "Y", 26);
-    headerPill({886, 108, 100, 48}, Action::Settings, 0, "settings", "SEL", 44);
-    drawWaveform(d, player, deckWave);
+    shortcutButton({790, 108, 84, 48}, Action::Context, player.current, "more", "keycap-y", 26, 24, 32, p.elevated, 12);
+    shortcutButton({886, 108, 100, 48}, Action::Settings, 0, "settings", "keycap-sel", 46, 24, 32, p.elevated, 12);
+    drawWaveform(d, player, deckWave, smooth(deckProgressTransition - 1.f));
     hit(deckWave, Action::Scrub);
-    if (seekPopup > 0 && track) {
-        const float x = std::clamp(deckWave.x + deckWave.w * player.progress() - 78, 38.f, 830.f);
-        d.frame({even(x), 190, 156, 58}, d.vfd() ? 2 : 12, p.elevated, p.strong);
-        d.label(timecode(player.seconds), {even(x), 190, 156, 58}, Size::Title, p.text, Face::Mono, Align::Center);
-    }
 
     button(d, {16, 348, 172, 172}, Action::Previous, 0, "prev", {}, false, false, 48,
            std::nullopt, std::nullopt, 48, 18);
@@ -538,10 +573,10 @@ void DeckUi::transport(Draw& d)
     d.frame({16, 536, 992, 94}, d.vfd() ? 2 : 16, p.card, p.border);
     const bool isMuted = player.mute || player.volume == 0;
     button(d, {36, 554, 58, 58}, Action::Mute, 0, isMuted ? "speaker-mute" : "speaker", {},
-           false, false, 28, isMuted ? mix(p.elevated, p.danger, .16f) : p.elevated,
+           false, false, 32, isMuted ? mix(p.elevated, p.danger, .16f) : p.elevated,
            isMuted ? p.danger : p.text);
     button(d, {930, 554, 58, 58}, Action::Output, 0, outputIcons[output], {},
-           false, false, 28, p.elevated);
+           false, false, 32, p.elevated);
     d.frame(volumeTrack, d.vfd() ? 2 : 12, p.bg, isMuted ? alpha(p.strong, .5f) : p.strong);
     const int effVol = isMuted ? 0 : player.volume;
     const float thumb = volumeTrack.x + 22 + even((volumeTrack.w - 44) * effVol / 100.f);
@@ -551,9 +586,10 @@ void DeckUi::transport(Draw& d)
     }
     d.frame({thumb - 22, 562, 44, 44}, d.vfd() ? 2 : 12, isMuted ? p.muted : p.accent, p.card);
     hit({volumeTrack.x, 550, volumeTrack.w, 68}, Action::Volume);
-    if (volumeTime > 0) {
-        const float opacity = std::min(1.f, volumeTime / .16f);
-        const Rect bubble{std::clamp(thumb - 40, 108.f, 834.f), 504 + even(8 * (1 - opacity)), 80, 52};
+    const bool adjustingVolume = pressed && pressed->action == Action::Volume;
+    if (adjustingVolume || volumeTime > 0) {
+        const float opacity = adjustingVolume ? 1.f : std::min(1.f, volumeTime / .16f);
+        const Rect bubble{thumb - 40, volumeTrack.y - 64 + even(8 * (1 - opacity)), 80, 52};
         if (isMuted) {
             d.frame(bubble, d.vfd() ? 2 : 14, alpha(p.card, opacity), alpha(p.danger, opacity));
             d.label("0", bubble, Size::Body, alpha(p.danger, opacity), Face::Mono, Align::Center, true);
@@ -564,17 +600,16 @@ void DeckUi::transport(Draw& d)
         }
     }
 
-    button(d, {16, 646, 236, 104}, Action::Stage, 0, stageIcons[stage], {}, false, false, 34,
-           std::nullopt, p.text, 48);
-    const Rect stageHint{214, 654, 28, 26};
-    d.frame(stageHint, d.vfd() ? 2 : 6, p.bg, p.strong);
-    d.label("X", stageHint, Size::Caption, p.dim, Face::Mono, Align::Center, true);
-    button(d, {268, 646, 236, 104}, Action::Shuffle, 0, "shuffle", {}, false, false, 34,
-           std::nullopt, player.shuffle ? p.text : p.muted, 48, 14, player.shuffle);
+    constexpr int quickPadIconSize = 48;
+    shortcutButton({16, 646, 236, 104}, Action::Stage, 0, stageIcons[stage], "keycap-x", 26,
+                   quickPadIconSize, quickPadIconSize, p.card, 14);
+    button(d, {268, 646, 236, 104}, Action::Shuffle, 0, "shuffle", {}, false, false, quickPadIconSize,
+           std::nullopt, player.shuffle ? p.text : p.muted, quickPadIconSize, 14, player.shuffle);
     button(d, {520, 646, 236, 104}, Action::Repeat, 0, player.repeat == 2 ? "repeat-one" : "repeat", {},
-           false, false, 34, std::nullopt, player.repeat ? p.text : p.muted, 48, 14, player.repeat != 0);
+           false, false, quickPadIconSize, std::nullopt, player.repeat ? p.text : p.muted,
+           quickPadIconSize, 14, player.repeat != 0);
     button(d, {772, 646, 236, 104}, Action::Album, player.current, "goto-album", {},
-           false, false, 34, std::nullopt, p.dim, 48);
+           false, false, quickPadIconSize, std::nullopt, p.dim, quickPadIconSize);
 }
 
 const std::vector<DeckUi::Row>& DeckUi::rows() const
@@ -771,10 +806,10 @@ void DeckUi::rebuildCatalogCache() const
                                          std::to_string(detail.ids.size()) + ")", false});
                 curY += 34;
                 for (int i = cachedArtistAlbumCount; i < static_cast<int>(cachedRows.size()); ++i) {
-                    cachedRows[i].box = {16.f, curY, 916.f, 116.f};
-                    curY += 116.f + 12.f;
+                    cachedRows[i].box = {16.f, curY, 916.f, listRowHeight};
+                    curY += listRowHeight + listRowGap;
                 }
-                curY -= 12.f;
+                curY -= listRowGap;
             }
             cachedContentHeight = curY;
             return;
@@ -796,25 +831,24 @@ void DeckUi::rebuildCatalogCache() const
                     curY += 36;
                 }
                 r.box = {16.f, curY, 916.f, 92.f};
-                curY += 92.f + 12.f;
+                curY += 92.f + listRowGap;
             }
-            cachedContentHeight = std::max(0.f, curY - 12.f);
+            cachedContentHeight = std::max(0.f, curY - listRowGap);
             return;
         }
-        // Playlist Detail: full 116px track rows with album art & Artist — Album subtitle
+        // Playlist detail uses the same rows as the Songs tab.
         float curY = 0;
         for (auto& r : cachedRows) {
-            r.box = {16.f, curY, 916.f, 116.f};
-            curY += 116.f + 12.f;
+            r.box = {16.f, curY, 916.f, listRowHeight};
+            curY += listRowHeight + listRowGap;
         }
-        cachedContentHeight = std::max(0.f, curY - 12.f);
+        cachedContentHeight = std::max(0.f, curY - listRowGap);
         return;
     }
 
     const int cols = gridColumns();
-    const float rowH = cols == 3 ? 368.f : tab == Tab::Queue ? 108.f : tab == Tab::Artists ? 96.f
-                     : tab == Tab::Playlists ? 112.f : tab == Tab::Songs ? 116.f : 118.f;
-    const float gap = cols == 3 ? 14.f : 12.f;
+    const float rowH = cols == 3 ? 368.f : listRowHeight;
+    const float gap = cols == 3 ? 14.f : listRowGap;
     const float cellW = cols == 3 ? 296.f : 916.f;
     for (int i = 0; i < static_cast<int>(cachedRows.size()); ++i) {
         cachedRows[i].box = {16.f + (i % cols) * (cellW + gap), (i / cols) * (rowH + gap), cellW, rowH};
@@ -870,7 +904,7 @@ void DeckUi::catalog(Draw& d)
 
     if (!root) {
         d.frame({16, 92, 992, 88}, d.vfd() ? 2 : 16, p.card, p.strong);
-        button(d, {30, 102, 68, 68}, Action::Back, 0, "back", {}, false, false, 28, p.elevated);
+        button(d, {30, 102, 68, 68}, Action::Back, 0, "back", {}, false, false, 32, p.elevated);
         const auto& detail = details.back();
 
         // Right-aligned animated Shuffle / Play / Queue action buttons
@@ -888,7 +922,8 @@ void DeckUi::catalog(Draw& d)
         }
         for (int k = 0; k < 3; ++k)
             expandingButton(d, btnBoxes[k], actions[k], 0, icons[k], labels[k],
-                            detailBtnAnim[k], toolFocus && toolSelection == k, k == 1, 28);
+                            detailBtnAnim[k], toolFocus && toolSelection == k,
+                            k == 1 && detail.source == Tab::Playlists, 32);
 
         float titleX = 114.f;
         std::string headerTitle = detail.playlist < 0 && detail.source == Tab::Playlists
@@ -906,7 +941,7 @@ void DeckUi::catalog(Draw& d)
             const Rect tile{110, 99, 74, 74};
             d.frame(tile, d.vfd() ? 2 : 12, p.elevated, p.strong);
             d.icon(detail.playlist < 0 ? "star-filled" : "playlists",
-                   {tile.x + 20, tile.y + 20, 34, 34}, p.accent, 32);
+                   {tile.x + 21, tile.y + 21, 32, 32}, p.accent);
             titleX = 200.f;
             int totalSec = 0;
             for (const int id : detail.ids)
@@ -966,11 +1001,11 @@ void DeckUi::catalog(Draw& d)
             } else {
                 const auto spec = activeSortSpec();
                 const std::string sortText = std::string(spec.label) + (ascending ? " ↑" : " ↓");
-                const float sortW = std::clamp(even(40.f + 22.f + 10.f + d.textWidth(sortText, Size::Sub, Face::Display, true)),
+                const float sortW = std::clamp(even(40.f + 24.f + 10.f + d.textWidth(sortText, Size::Sub, Face::Display, true)),
                                                160.f, 260.f);
                 rightX -= sortW;
                 button(d, {rightX, y, sortW, 60}, Action::Order, 0, "sort", sortText,
-                       toolFocus && toolSelection == (tab == Tab::Albums ? 5 : 3), false, 22, p.elevated, p.text);
+                       toolFocus && toolSelection == (tab == Tab::Albums ? 5 : 3), false, 24, p.elevated, p.text);
                 rightX -= 14.f;
 
                 if (tab == Tab::Albums) {
@@ -1066,41 +1101,60 @@ void DeckUi::catalog(Draw& d)
             const bool threeCol = cell.w < 350.f;
             const float artSize = threeCol ? 256.f : 124.f;
             const auto count = std::to_string(row.ids.size());
-            const float badgeW = even(d.textWidth(count, Size::Caption, Face::Mono, true) + 20);
+            const float badgeW = even(d.textWidth(count, Size::Body, Face::Mono, true) + 20);
             if (threeCol) {
-                d.art(cover, {cell.x + 20, cell.y + 14, artSize, artSize}, 12);
-                d.label(row.title, {cell.x + 14, cell.y + 280, 268, 34},
-                        Size::Body, p.text, Face::Display, Align::Left, true, true);
-                d.label(row.subtitle, {cell.x + 14, cell.y + 318, 254 - badgeW, 28},
-                        Size::Sub, p.dim, Face::Display, Align::Left, false, true);
-                const Rect badge{cell.x + cell.w - 14 - badgeW, cell.y + 318, badgeW, 28};
+                const Rect artwork{cell.x + 20, cell.y + 14, artSize, artSize};
+                d.art(cover, artwork, 12);
+                const float textX = cell.x + 14;
+                const float titleY = artwork.y + artwork.h + 8;
+                const float subtitleY = titleY + listTitleHeight;
+                const Rect badge{cell.x + cell.w - 14 - badgeW, subtitleY, badgeW, listSubtitleHeight};
+                d.label(row.title, {textX, titleY, cell.w - 28, listTitleHeight},
+                        Size::Title, p.text, Face::Display, Align::Left, true, true);
+                d.label(row.subtitle, {textX, subtitleY, badge.x - textX - 12, listSubtitleHeight},
+                        Size::Body, p.dim, Face::Display, Align::Left, false, true);
                 d.round(badge, d.vfd() ? 2 : 8, p.soft);
-                d.label(count, badge, Size::Caption, p.accent, Face::Mono, Align::Center, true);
+                d.label(count, badge, Size::Body, p.accent, Face::Mono, Align::Center, true);
             } else {
                 d.art(cover, {cell.x + 18, cell.y + 18, artSize, artSize}, 12);
-                d.label(row.title, {cell.x + 158, cell.y + 24, cell.w - 176, 34},
-                        Size::Body, p.text, Face::Display, Align::Left, true, true);
-                d.label(row.subtitle, {cell.x + 158, cell.y + 64, cell.w - 176, 28}, Size::Sub, p.dim,
-                        Face::Display, Align::Left, false, true);
-                const Rect badge{cell.x + 158, cell.y + 104, badgeW, 28};
+                const float textX = cell.x + 158;
+                const float textW = cell.w - 176;
+                const float titleY = cell.y + 18;
+                const float subtitleY = titleY + listTitleHeight;
+                d.label(row.title, {textX, titleY, textW, listTitleHeight},
+                        Size::Title, p.text, Face::Display, Align::Left, true, true);
+                d.label(row.subtitle, {textX, subtitleY, textW, listSubtitleHeight},
+                        Size::Body, p.dim, Face::Display, Align::Left, false, true);
+                const Rect badge{textX, subtitleY + listSubtitleHeight + 8, badgeW, listSubtitleHeight};
                 d.round(badge, d.vfd() ? 2 : 8, p.soft);
-                d.label(count, badge, Size::Caption, p.accent, Face::Mono, Align::Center, true);
+                d.label(count, badge, Size::Body, p.accent, Face::Mono, Align::Center, true);
             }
         } else if (row.track < 0) {
             const bool artist = row.source == Tab::Artists;
             const bool playlist = row.source == Tab::Playlists;
             const float textX = cell.x + (artist ? 24 : playlist ? 110 : 124);
             if (playlist) {
-                const Rect tile{cell.x + 22, cell.y + 20, 72, 72};
+                const Rect tile{cell.x + 22, cell.y + (cell.h - 72) / 2, 72, 72};
                 d.frame(tile, d.vfd() ? 2 : 14, p.elevated, p.strong);
                 d.icon(row.playlist < 0 ? "star-filled" : "tracks",
                        {tile.x + 20, tile.y + 20, 32, 32}, p.accent, 32);
             } else if (!artist) {
-                d.art(cover, {cell.x + 18, cell.y + 16, 88, 88}, 12);
+                d.art(cover, {cell.x + 18, cell.y + (cell.h - 88) / 2, 88, 88}, 12);
             }
-            d.label(row.title, {textX, cell.y + (artist ? 16.f : playlist ? 38.f : 22.f),
-                    cell.x + cell.w - textX - 108, 36},
-                    Size::Body, p.text, Face::Display, Align::Left, true, true);
+            float textRight = cell.x + cell.w - 22;
+            if (!artist) {
+                const auto count = std::to_string(row.ids.size());
+                const float badgeW = even(d.textWidth(count, Size::Body, Face::Mono, true) + 28);
+                const Rect badge{textRight - badgeW, cell.y + (cell.h - listSubtitleHeight) / 2,
+                                 badgeW, listSubtitleHeight};
+                d.round(badge, d.vfd() ? 2 : 10, p.soft);
+                d.label(count, badge, Size::Body, p.accent, Face::Mono, Align::Center, true);
+                textRight = badge.x - 12;
+            }
+            const float textW = textRight - textX;
+            const float titleY = rowTextTop(cell, !playlist);
+            d.label(row.title, {textX, titleY, textW, listTitleHeight},
+                    Size::Title, p.text, Face::Display, Align::Left, true, true);
             if (!playlist) {
                 std::string subtitle = row.subtitle;
                 if (artist) {
@@ -1109,20 +1163,8 @@ void DeckUi::catalog(Draw& d)
                         : (std::to_string(row.albumCount) + (row.albumCount == 1 ? " Album, " : " Albums, ") +
                            std::to_string(row.ids.size()) + (row.ids.size() == 1 ? " Song" : " Songs"));
                 }
-                d.label(subtitle, {textX, cell.y + (artist ? 54.f : 64.f), cell.w - 190, 28},
-                        Size::Sub, p.dim, Face::Display, Align::Left, false, true);
-            }
-            if (!artist) {
-                const auto count = std::to_string(row.ids.size());
-                if (playlist) {
-                    d.label(count, {cell.x + cell.w - 108, cell.y, 86, cell.h}, Size::Sub,
-                            p.dim, Face::Mono, Align::Right, true);
-                } else {
-                    const float badgeW = even(d.textWidth(count, Size::Sub, Face::Mono, true) + 28);
-                    const Rect badge{cell.x + cell.w - 22 - badgeW, cell.y + 42, badgeW, 36};
-                    d.round(badge, d.vfd() ? 2 : 10, p.soft);
-                    d.label(count, badge, Size::Sub, p.accent, Face::Mono, Align::Center, true);
-                }
+                d.label(subtitle, {textX, titleY + listTitleHeight, textW, listSubtitleHeight},
+                        Size::Body, p.dim, Face::Display, Align::Left, false, true);
             }
         } else {
             const auto& track = player.tracks[row.track];
@@ -1146,36 +1188,40 @@ void DeckUi::catalog(Draw& d)
                 }
             }
             const float titleX = isQueue ? cell.x + 22.f : artX + art + 16.f;
-            const float durationX = cell.x + cell.w - (isQueue ? 266.f : 198.f);
+            const std::string duration = timecode(track.duration);
+            const float durationW = std::max(isQueue ? 90.f : 94.f,
+                                             even(d.textWidth(duration, Size::Body, Face::Mono, false) + 4));
+            const float durationX = cell.x + cell.w - (isQueue ? 176.f : 104.f) - durationW;
             const bool starred = player.stars[row.track];
-            const float starReserve = starred ? 28.f : 0.f;
+            constexpr float starSize = 32.f;
+            constexpr float starGap = 8.f;
+            const float starReserve = starred ? starSize + starGap : 0.f;
             const float availTitleW = std::max(0.f, durationX - titleX - 16.f - starReserve);
-            const float titleY = cell.y + (albumMode ? even((cell.h - 36.f) / 2) : isQueue ? 20.f : 24.f);
-            d.label(row.title, {titleX, titleY, availTitleW, 36.f},
-                    Size::Body, p.text, Face::Display, Align::Left, true, true);
+            const float titleY = rowTextTop(cell, !albumMode);
+            d.label(row.title, {titleX, titleY, availTitleW, listTitleHeight},
+                    Size::Title, p.text, Face::Display, Align::Left, true, true);
             if (starred) {
-                const float naturalW = d.textWidth(row.title, Size::Body, Face::Display, true);
-                const float starDim = d.vfd() ? 16.f : 18.f;
-                const float starX = titleX + even(std::min(naturalW, availTitleW)) + 8.f;
-                const float starY = titleY + even((36.f - starDim) / 2);
-                d.icon("star-filled", {starX, starY, starDim, starDim}, p.text, 16);
+                const float naturalW = d.textWidth(row.title, Size::Title, Face::Display, true);
+                const float starX = titleX + even(std::min(naturalW, availTitleW)) + starGap;
+                const float starY = titleY + (listTitleHeight - starSize) / 2;
+                d.icon("star-filled", {starX, starY, starSize, starSize}, p.text);
             }
             if (!albumMode) {
-                d.label(row.subtitle, {titleX, cell.y + (isQueue ? 58.f : 64.f), durationX - titleX - 16.f, 28.f},
-                        Size::Sub, p.dim, Face::Display, Align::Left, false, true);
+                d.label(row.subtitle, {titleX, titleY + listTitleHeight, durationX - titleX - 16.f, listSubtitleHeight},
+                        Size::Body, p.dim, Face::Display, Align::Left, false, true);
             }
-            d.label(timecode(track.duration), {durationX, cell.y, isQueue ? 90.f : 94.f, cell.h}, Size::Sub,
+            d.label(duration, {durationX, cell.y, durationW, cell.h}, Size::Body,
                     p.dim, Face::Mono, Align::Right, false, false, 600);
             if (isQueue) {
-                const float y = cell.y + 22.f;
+                const float y = cell.y + (cell.h - 64) / 2;
                 button(d, {cell.x + cell.w - 164, y, 64, 64}, Action::PlayNext, row.track, "play-next",
-                       {}, false, false, 28, p.elevated);
+                       {}, false, false, 32, p.elevated);
                 button(d, {cell.x + cell.w - 90, y, 64, 64}, Action::RowMenu, i, "more",
-                       {}, false, false, 28, p.elevated);
+                       {}, false, false, 32, p.elevated);
             } else {
                 const float y = cell.y + even((cell.h - 68) / 2);
                 button(d, {cell.x + cell.w - 88, y, 68, 68}, Action::RowMenu, i, "more",
-                       {}, false, false, 28, p.elevated);
+                       {}, false, false, 32, p.elevated);
             }
         }
     }
@@ -1211,15 +1257,6 @@ void DeckUi::catalog(Draw& d)
             ticks.push_back(mark(count));
     }
     drawScrollbar(d, rail, scroll, scrollLimit, Action::Rail, ticks);
-
-    if (d.vfd()) {
-        d.phosphor({0, 0, 1024, top});
-        d.phosphor(rail);
-        const bool hasCovers = root ? (tab == Tab::Albums || tab == Tab::Songs)
-                                    : (details.back().source != Tab::Albums);
-        if (!hasCovers)
-            d.phosphor(listBox);
-    }
 
     if (railPopup > 0 && !entries.empty() && scrollLimit > 0) {
         int nearIdx = 0;
@@ -1281,7 +1318,6 @@ void DeckUi::keypadUi(Draw& d)
         d.label(caption, box, key.function ? Size::Sub : Size::Body,
                 key.done ? p.accent : key.function ? p.dim : p.text, Face::Mono, Align::Center, true);
     }
-    d.phosphor({16, y, 992, 280});
     if (!textInput())
         hits.resize(hitsBefore);
 }
@@ -1366,7 +1402,7 @@ void DeckUi::overlay(Draw& d)
     if (sheet == Sheet::Settings) {
         d.rect({0, 76, 1024, 692}, p.bg);
         d.frame({16, 92, 992, 88}, d.vfd() ? 2 : 16, p.card, p.strong);
-        button(d, {30, 102, 68, 68}, Action::Back, 0, "back", {}, false, false, 28, p.elevated);
+        button(d, {30, 102, 68, 68}, Action::Back, 0, "back", {}, false, false, 32, p.elevated);
         const std::string_view settingsHeading = tr("Deck Settings", "本体設定");
         const auto titleW = d.textWidth(settingsHeading, Size::Title, Face::Display, true);
         d.label(settingsHeading, {114, 92, titleW + 8, 88}, Size::Title, p.text, Face::Display, Align::Left, true);
@@ -1389,10 +1425,12 @@ void DeckUi::overlay(Draw& d)
             if (focus)
                 d.strokeRound(inset(box, -4), d.vfd() ? 6 : 20, p.soft, 4);
             d.frame(box, d.vfd() ? 2 : 16, p.card, focus ? p.accent : p.border, focus ? 4 : 2);
-            d.label(heading, {box.x + 22, box.y + 14, box.w - 200, 30},
+            const float infoW = rightInfo.empty() ? 0 : even(d.textWidth(rightInfo, Size::Body, Face::Mono, true) + 2);
+            const float infoRight = box.x + box.w - 22;
+            d.label(heading, {box.x + 22, box.y + 14, box.w - 60 - infoW, 30},
                     Size::Sub, p.muted, Face::Mono, Align::Left, true);
             if (!rightInfo.empty())
-                d.label(rightInfo, {box.x + box.w - 200, box.y + 14, 178, 30},
+                d.label(rightInfo, {infoRight - infoW, box.y + 14, infoW, 30},
                         Size::Body, p.accent, Face::Mono, Align::Right, true);
         };
         const auto segment = [&](Rect box, int option, std::string_view label, bool selected,
@@ -1510,7 +1548,6 @@ void DeckUi::overlay(Draw& d)
 
         const Rect sRail{railBox.x, 192, railBox.w, 560};
         drawScrollbar(d, sRail, settingsScroll, settingsLimit, Action::SettingsRail, {"1", "5", "10"});
-        d.phosphor({0, 76, 1024, 692});
         return;
     }
 
@@ -1570,7 +1607,6 @@ void DeckUi::overlay(Draw& d)
                     focus ? (sel ? p.text : p.accent) : (sel ? p.accent : p.strong), focus ? 4 : 2);
             d.label(items[idx].label, r, Size::Body, sel ? p.accentInk : p.text, Face::Display, Align::Center, true);
         }
-        d.phosphor({62, top, 900, height});
         return;
     }
 
@@ -1628,7 +1664,6 @@ void DeckUi::overlay(Draw& d)
                keypad && !typing && sheetSelection == static_cast<int>(items.size()) + 1, false, 24,
                p.accent, p.accentInk, 24, 14);
 
-        d.phosphor({62, top, 900, height});
         if (typing)
             keypadUi(d);
         return;
@@ -1654,7 +1689,10 @@ void DeckUi::overlay(Draw& d)
         d.label(sub, {headingX, top + 62, 852 - headingX, 28}, Size::Sub,
                 p.dim, Face::Mono, Align::Left, false, true);
     }
-    button(d, {876, top + 28, 60, 60}, Action::Back, 0, {}, "×", false, false, 28, p.elevated);
+    if (sheet == Sheet::Track)
+        button(d, {872, top + 26, 64, 64}, Action::Back, 0, "close", {}, false, false, 32, p.elevated);
+    else
+        button(d, {876, top + 28, 60, 60}, Action::Back, 0, {}, "×", false, false, 28, p.elevated);
 
     if (sheet == Sheet::Info && track) {
         struct InfoRow { std::string_view label; std::string value; bool full; bool mono; };
@@ -1759,7 +1797,6 @@ void DeckUi::overlay(Draw& d)
             hit(r, Action::Option, i);
         }
     }
-    d.phosphor({62, top, 900, height});
 }
 
 void DeckUi::targetScroll(float target, bool animate)
@@ -1839,7 +1876,6 @@ void DeckUi::scrubPosition(Action which, float x)
         activate(Action::Brightness, static_cast<int>(std::lround((x - 58) * 6 / 832)));
     } else if (which == Action::Scrub) {
         player.seek((x - deckWave.x) / deckWave.w);
-        seekPopup = .65f;
     } else {
         const float fraction = std::clamp((x - volumeTrack.x - 22) / (volumeTrack.w - 44), 0.f, 1.f);
         player.volume = static_cast<int>(std::round(fraction * 100));
@@ -2379,7 +2415,7 @@ void DeckUi::eraseCharacter()
 
 void DeckUi::text(std::string_view value, bool physicalKeyboard)
 {
-    if (!textInput())
+    if (!textInput() || (physicalKeyboard && value == " " && heldKeys.contains(SDLK_SPACE)))
         return;
     if (physicalKeyboard)
         keypad = false;
@@ -2541,6 +2577,8 @@ void DeckUi::pointer(float x, float y, int phase)
         return;
     const auto item = *pressed;
     pressed.reset();
+    if (item.action == Action::Volume)
+        volumeTime = .7f;
     lastAction = item.action;
     lastData = item.data;
     releaseTime = .11f;
@@ -2627,7 +2665,7 @@ void DeckUi::wheel(float direction)
 void DeckUi::cancelInput()
 {
     pressed.reset();
-    heldKeyVoices.clear();
+    heldKeys.clear();
     heldKeyUi.clear();
     tabSliding = tabSlideMoved = tabSlideCommitted = false;
     seekDirection = 0;
@@ -2744,7 +2782,7 @@ void DeckUi::libraryKey(SDL_Keycode value)
         if (detail) targetScroll(0);
         return;
     }
-    const float nomRowH = !entries.empty() ? (entries[0].box.h + 12.f) : 120.f;
+    const float nomRowH = entries.empty() ? listRowHeight + listRowGap : entries[0].box.h + listRowGap;
     const int page = std::max(4, static_cast<int>(listBox.h / nomRowH));
     int next = selection;
     if (value == SDLK_UP) next -= columns;
@@ -2884,10 +2922,10 @@ void DeckUi::key(SDL_Keycode value, bool down, bool repeated, bool controller)
             releaseTime = .11f;
             heldKeyUi.erase(uiIt);
         }
-        const auto heldIt = heldKeyVoices.find(rawKey);
+        const auto heldIt = heldKeys.find(rawKey);
         if ((value == SDLK_LEFT && seekDirection == -1) || (value == SDLK_RIGHT && seekDirection == 1)) {
-            if (heldIt != heldKeyVoices.end())
-                heldKeyVoices.erase(heldIt);
+            if (heldIt != heldKeys.end())
+                heldKeys.erase(heldIt);
             if (seekHold < .32f) {
                 seekDirection < 0 ? player.previous() : player.next();
                 player.chime("", true);
@@ -2895,52 +2933,49 @@ void DeckUi::key(SDL_Keycode value, bool down, bool repeated, bool controller)
             seekDirection = 0;
             return;
         }
-        if (heldIt != heldKeyVoices.end()) {
-            const auto voice = heldIt->second;
-            heldKeyVoices.erase(heldIt);
-            if (voice != "NONE")
-                player.chime(voice, true);
+        if (heldIt != heldKeys.end()) {
+            auto key = std::move(heldIt->second);
+            heldKeys.erase(heldIt);
+            if (key.voice != "NONE")
+                player.chime(key.voice, true);
+            if (key.onRelease)
+                key.onRelease();
         }
         return;
     }
 
-    const auto beginTwoStep = [&](std::string_view voice, Action uiAct = Action::None, int uiData = 0) {
+    const auto beginTwoStep = [&](std::string_view voice, Action uiAct = Action::None, int uiData = 0,
+                                  std::function<void()> onRelease = {}) {
         if (!repeated) {
-            player.chime(voice, false);
-            heldKeyVoices[rawKey] = voice;
+            if (voice != "NONE")
+                player.chime(voice, false);
+            heldKeys[rawKey] = {voice, std::move(onRelease)};
             if (uiAct != Action::None)
                 heldKeyUi[rawKey] = {uiAct, uiData};
         }
     };
-    const auto suppressRelease = [&](Action uiAct = Action::None, int uiData = 0) {
-        if (!repeated) {
-            heldKeyVoices[rawKey] = "NONE";
-            if (uiAct != Action::None)
-                heldKeyUi[rawKey] = {uiAct, uiData};
-        }
+    const auto holdAction = [&](std::string_view voice, Action action, int data = 0) {
+        beginTwoStep(voice, action, data, [this, action, data] { activate(action, data); });
     };
 
     if (value == SDLK_F1 && !repeated) {
-        beginTwoStep({});
-        showKeys = !showKeys;
+        beginTwoStep({}, Action::None, 0, [this] { showKeys = !showKeys; });
         return;
     }
     if (value == SDLK_F2 && !repeated) {
-        beginTwoStep({});
-        scaleMode = static_cast<PreviewScale>((static_cast<int>(scaleMode) + 1) %
-                                             static_cast<int>(PreviewScale::Count));
+        beginTwoStep({}, Action::None, 0, [this] {
+            scaleMode = static_cast<PreviewScale>((static_cast<int>(scaleMode) + 1) %
+                                                 static_cast<int>(PreviewScale::Count));
+        });
         return;
     }
     if (showKeys) {
-        if (value == SDLK_ESCAPE && !repeated) {
-            beginTwoStep("back");
-            showKeys = false;
-        }
+        if (value == SDLK_ESCAPE && !repeated)
+            beginTwoStep("back", Action::None, 0, [this] { showKeys = false; });
         return;
     }
     if (value == SDLK_L && !repeated && (controller || !textInput())) {
-        beginTwoStep({});
-        toggleLid();
+        beginTwoStep({}, Action::None, 0, [this] { toggleLid(); });
         return;
     }
     if (poweredOff)
@@ -2958,42 +2993,51 @@ void DeckUi::key(SDL_Keycode value, bool down, bool repeated, bool controller)
     if (displaysOff()) {
         if (!repeated) {
             if (value == SDLK_SPACE) {
-                beginTwoStep(voiceFor(Action::Play));
-                activate(Action::Play, 0);
+                holdAction(voiceFor(Action::Play), Action::Play);
             } else if (value == SDLK_LEFTBRACKET) {
-                beginTwoStep({});
-                player.previous();
+                holdAction({}, Action::Previous);
             } else {
-                beginTwoStep({});
-                player.next();
+                holdAction({}, Action::Next);
             }
         }
         return;
     }
     if (textInput()) {
-        if (value == SDLK_ESCAPE || (controller && value == SDLK_B)) {
-            if (!repeated) {
-                beginTwoStep("back", Action::ClearSearch, 0);
-                closeInput(false);
+        if (value == SDLK_SPACE && !repeated) {
+            const auto* done = std::ranges::find_if(keyAssets, [this](const KeyAsset& key) {
+                return key.symbols == symbols && key.action == "done";
+            });
+            if (done != std::end(keyAssets)) {
+                const int code = done->row * keyColumns + done->column + done->span / 2;
+                beginTwoStep("confirm", Action::Key, code, [this, field = input, code] {
+                    if (input == field) activate(Action::Key, code);
+                });
             }
+        } else if (value == SDLK_ESCAPE || (controller && value == SDLK_B)) {
+            beginTwoStep("back", Action::ClearSearch, 0, [this, field = input] {
+                if (input == field) closeInput(false);
+            });
         } else if (value == SDLK_BACKSPACE || (controller && value == SDLK_Y)) {
             int bkspCode = 9;
             for (const auto& k : keyAssets)
                 if (k.symbols == symbols && k.action == "bksp")
                     bkspCode = k.row * keyColumns + k.column + k.span / 2;
-            if (repeated) player.chime("tick");
-            else beginTwoStep("back", Action::Key, bkspCode);
-            eraseCharacter();
+            beginTwoStep("back", Action::Key, bkspCode, [this, field = input] {
+                if (input == field) eraseCharacter();
+            });
         } else if (value == SDLK_RETURN || value == SDLK_KP_ENTER) {
             if (!repeated) {
                 if (controller || keypad) {
                     const auto* k = referenceKey(symbols, keySelection);
                     const int code = k ? (k->row * keyColumns + k->column + k->span / 2) : keySelection;
-                    beginTwoStep(voiceFor(Action::Key, code), Action::Key, code);
-                    activate(Action::Key, code);
+                    beginTwoStep(voiceFor(Action::Key, code), Action::Key, code,
+                                 [this, code, field = input, wasSymbols = symbols] {
+                        if (input == field && symbols == wasSymbols) activate(Action::Key, code);
+                    });
                 } else {
-                    beginTwoStep("confirm");
-                    closeInput(true);
+                    beginTwoStep("confirm", Action::None, 0, [this, field = input] {
+                        if (input == field) closeInput(true);
+                    });
                 }
             }
         } else if (value == SDLK_UP || value == SDLK_DOWN || value == SDLK_LEFT || value == SDLK_RIGHT) {
@@ -3011,7 +3055,7 @@ void DeckUi::key(SDL_Keycode value, bool down, bool repeated, bool controller)
                 }
                 if (nextSel == keySelection) {
                     player.chime("bump");
-                    suppressRelease();
+                    beginTwoStep("NONE");
                 } else if (repeated) {
                     player.chime("tick");
                 } else {
@@ -3023,55 +3067,50 @@ void DeckUi::key(SDL_Keycode value, bool down, bool repeated, bool controller)
         return;
     }
     if (value == SDLK_SPACE && !repeated) {
-        beginTwoStep(voiceFor(Action::Play), Action::Play, 0);
-        activate(Action::Play, 0);
+        holdAction(voiceFor(Action::Play), Action::Play);
         return;
     }
-    if (value == SDLK_LEFTBRACKET && !repeated) { beginTwoStep({}, Action::Previous, 0); player.previous(); return; }
-    if (value == SDLK_RIGHTBRACKET && !repeated) { beginTwoStep({}, Action::Next, 0); player.next(); return; }
+    if (value == SDLK_LEFTBRACKET && !repeated) { holdAction({}, Action::Previous); return; }
+    if (value == SDLK_RIGHTBRACKET && !repeated) { holdAction({}, Action::Next); return; }
     if (value == SDLK_H && !repeated) {
-        beginTwoStep("confirm", Action::Album, player.current);
-        details.empty() ? openAlbum(player.current) : setTab(0);
+        beginTwoStep("confirm", Action::Album, player.current, [this, index = player.current] {
+            details.empty() ? openAlbum(index) : setTab(0);
+        });
         return;
     }
     if (value == SDLK_G && !repeated) {
         player.chime("", false);
-        suppressRelease(Action::Star, player.current);
-        activate(Action::Star, player.current);
+        holdAction("NONE", Action::Star, player.current);
         return;
     }
     if (value == SDLK_ESCAPE || value == SDLK_B) {
-        if (!repeated) {
-            beginTwoStep("back", Action::Back, 0);
-            back();
-        }
+        holdAction("back", Action::Back);
         return;
     }
     if (sheet != Sheet::None) {
         keypad = true;
-        const bool allowClockRepeat = (sheet == Sheet::Settings && sheetSelection == 3 && clockBtnFocus < 4);
-        if (!repeated || !confirm(value) || allowClockRepeat) {
-            if (confirm(value)) {
-                const int optTarget = (sheet == Sheet::Settings && sheetSelection == 3)
-                                    ? (60 + std::clamp(clockBtnFocus, 0, 4)) : sheetSelection;
-                const auto v = sheet == Sheet::Info ? std::string_view("back") : voiceFor(Action::Option, optTarget);
-                const bool isStar = (sheet == Sheet::Track && sheetSelection >= 0 &&
-                    sheetSelection < static_cast<int>(options().size()) &&
-                    options()[sheetSelection].id == OptStar) ||
-                    (sheet == Sheet::Playlist && sheetSelection == 0);
-                if (repeated) {
-                    player.chime("tick");
-                } else if (isStar) {
-                    player.chime("", false);
-                    suppressRelease(Action::Option, optTarget);
-                } else {
-                    beginTwoStep(v, Action::Option, optTarget);
-                }
-            } else if (repeated) {
-                player.chime("tick");
-            } else {
-                beginTwoStep({});
-            }
+        const bool isConfirm = confirm(value);
+        const bool clockRow = sheet == Sheet::Settings && sheetSelection == 3;
+        const bool adjustsSetting = sheet == Sheet::Settings && !clockRow &&
+                                    (value == SDLK_LEFT || value == SDLK_RIGHT);
+        if (isConfirm || adjustsSetting) {
+            if (repeated)
+                return;
+            const int target = clockRow ? 60 + clockBtnFocus : sheetSelection;
+            const bool isStar = isConfirm && ((sheet == Sheet::Track && target >= 0 &&
+                target < static_cast<int>(options().size()) && options()[target].id == OptStar) ||
+                (sheet == Sheet::Playlist && target == 0));
+            const auto voice = sheet == Sheet::Info ? std::string_view("back") : voiceFor(Action::Option, target);
+            if (isStar)
+                player.chime("", false);
+            beginTwoStep(isStar ? "NONE" : voice, isConfirm ? Action::Option : Action::None, target,
+                         [this, value, shown = sheet, row = sheetSelection, clockRow, clockFocus = clockBtnFocus] {
+                if (sheet == shown && sheetSelection == row && (!clockRow || clockBtnFocus == clockFocus))
+                    sheetKey(value);
+            });
+        } else {
+            if (repeated) player.chime("tick");
+            else beginTwoStep({});
             sheetKey(value);
         }
         return;
@@ -3080,45 +3119,27 @@ void DeckUi::key(SDL_Keycode value, bool down, bool repeated, bool controller)
         if (!repeated) {
             const int cur = static_cast<int>(tab);
             const int index = cur + (value == SDLK_Q ? -1 : 1);
-            if (index >= 0 && index < 6)
-                beginTwoStep("deck", Action::Tab, index);
-            else
-                suppressRelease(Action::Tab, index);
-            setTab(index);
+            holdAction(index >= 0 && index < 6 ? "deck" : "NONE", Action::Tab, index);
         }
         return;
     }
     if (value == SDLK_X && !repeated) {
-        beginTwoStep("stage", Action::Stage, 0);
-        cycleStage();
+        holdAction("stage", Action::Stage);
         return;
     }
     if (value == SDLK_S || value == SDLK_TAB) {
-        if (!repeated) {
-            const Action uiAct = tab == Tab::Deck ? Action::Settings
-                               : tab == Tab::Playlists ? Action::NewPlaylist : Action::Order;
-            beginTwoStep({}, uiAct, 0);
-            if (tab == Tab::Deck) openSheet(Sheet::Settings);
-            else if (tab == Tab::Playlists) activate(Action::NewPlaylist, 0);
-            else if (tab != Tab::Queue) openSheet(Sheet::Order);
-        }
+        if (tab == Tab::Deck) holdAction({}, Action::Settings);
+        else if (tab == Tab::Playlists) holdAction({}, Action::NewPlaylist);
+        else if (tab != Tab::Queue) holdAction({}, Action::Order);
         return;
     }
     if (value == SDLK_Y && !repeated) {
-        if (tab == Tab::Deck) {
-            beginTwoStep({}, Action::Context, player.current);
-            openContext(player.current);
-        } else {
-            beginTwoStep({}, Action::RowMenu, selection);
-            activate(Action::RowMenu, selection);
-        }
+        if (tab == Tab::Deck) holdAction({}, Action::Context, player.current);
+        else holdAction({}, Action::RowMenu, selection);
         return;
     }
     if ((value == SDLK_SLASH || value == SDLK_F) && tab != Tab::Deck && tab != Tab::Queue && details.empty()) {
-        if (!repeated) {
-            beginTwoStep({}, Action::Search, 0);
-            openInput(Input::Search);
-        }
+        holdAction({}, Action::Search);
         return;
     }
     if (tab != Tab::Deck) {
@@ -3160,15 +3181,20 @@ void DeckUi::key(SDL_Keycode value, bool down, bool repeated, bool controller)
                     }
                 }
                 if (!toolFocus && rows().empty())
-                    suppressRelease();
+                    beginTwoStep("NONE");
                 else
-                    beginTwoStep(v, uiAct, uiData);
-            } else if (repeated) {
-                player.chime("tick");
+                    beginTwoStep(v, uiAct, uiData,
+                                 [this, value, from = tab, depth = details.size(), row = selection,
+                                  toolbar = toolFocus, tool = toolSelection] {
+                        if (sheet == Sheet::None && tab == from && details.size() == depth && toolFocus == toolbar &&
+                            (toolbar ? toolSelection == tool : selection == row))
+                            libraryKey(value);
+                    });
             } else {
-                beginTwoStep({});
+                if (repeated) player.chime("tick");
+                else beginTwoStep({});
+                libraryKey(value);
             }
-            libraryKey(value);
         }
         return;
     }
@@ -3183,8 +3209,7 @@ void DeckUi::key(SDL_Keycode value, bool down, bool repeated, bool controller)
         seekDirection = value == SDLK_LEFT ? -1 : 1;
         seekHold = 0;
     } else if (confirm(value) && !repeated) {
-        beginTwoStep(voiceFor(Action::Play), Action::Play, 0);
-        activate(Action::Play, 0);
+        holdAction(voiceFor(Action::Play), Action::Play);
     }
 }
 
@@ -3330,6 +3355,8 @@ void DeckUi::configureSnapshot(int preset)
     }
     player.sfx = true;
     tabTime = 1.f;
+    deckProgressTransition = tab == Tab::Deck ? 2.f : 0.f;
+    stageCentering = tab == Tab::Deck ? 1.f : 0.f;
     for (int i = 0; i < 6; ++i)
         tabWidths[i] = (i == static_cast<int>(tab) ? 260.f : 108.f);
     rowsValid = false;

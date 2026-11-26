@@ -23,3 +23,5 @@ The main window scales two fixed 1024 × 768 panels. The right panel provides cl
 Click the lower panel to simulate touch. Use **Keys** for keyboard shortcuts or **F2** to cycle display modes. Run with `--panels` to preview the two panels in separate windows. On macOS, use `open Native/build/DeckDS.app --args --panels`.
 
 Space starts the synthesized demo track. **C** (the RG DS Plus X button) cycles Cover, VU and Spectrum. **Q/E** change tabs, **Up** at the top of a library view reveals its toolbar, and **/** opens search and the touch keypad. The toolbar's library control switches between the web demo's 100- and 2,000-album catalogs. The SDL3 build has been exercised on macOS and desktop Linux. The two-panel kiosk mode and the handheld's display, input and appliance services still need RG DS Plus testing.
+
+On the Deck tab, **Tab** opens Settings. **Time Format** switches the top screen between 12-hour and 24-hour time. **Set Clock** adjusts the time DeckDS displays by hours or minutes, and **Sync** returns it to the computer's local time. DeckDS saves the format and adjustment across restarts.
