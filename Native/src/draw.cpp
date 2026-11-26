@@ -38,20 +38,70 @@ bool inside(Rect r, float x, float y) { return x >= r.x && y >= r.y && x < r.x +
 float even(float v) { return std::round(v / 2) * 2; }
 float smooth(float t) { return 1 - std::pow(1 - std::clamp(t, 0.f, 1.f), 3.f); }
 
-const Palette& colors(Theme theme)
+std::array<AccentPreset, 4> accentPresets(Theme theme)
 {
-    static const Palette palettes[] = {
+    switch (theme) {
+    case Theme::Obsidian:
+        return {{{ "Amber", "アンバー", color(0xff7a1a) }, { "Cyan", "シアン", color(0x38bdf8) },
+                 { "Mint", "ミント", color(0x2dd4a0) }, { "Coral", "コーラル", color(0xff5c7c) }}};
+    case Theme::Ceramic:
+        return {{{ "Vermilion", "朱色", color(0xe6481e) }, { "Cobalt", "コバルト", color(0x2563eb) },
+                 { "Forest", "フォレスト", color(0x15803d) }, { "Plum", "プラム", color(0x7e22ce) }}};
+    case Theme::Vfd:
+        return {{{ "Aqua", "アクア", color(0x38f2c6) }, { "Amber", "アンバー", color(0xffb020) },
+                 { "Green", "グリーン", color(0x39e868) }, { "Ice", "アイス", color(0x5ce1ff) }}};
+    }
+    return {};
+}
+
+const Palette& colors(Theme theme, int accent)
+{
+    const int idx = std::clamp(accent, 0, 3);
+    static const Palette obsidian[4] = {
         {color(0x0c0d10), color(0x15171d), color(0x1c1f27), color(0x252934), color(0x2c313d),
          color(0x414859), color(0xf5f2ea), color(0xaeb4c2), color(0x767d8e), color(0xff7a1a),
          color(0xff7a1a, 46), color(0x120b05), color(0xff4757), color(0x171410), color(0x382a1a), color(0x343948)},
+        {color(0x0c0d10), color(0x15171d), color(0x1c1f27), color(0x252934), color(0x2c313d),
+         color(0x414859), color(0xf5f2ea), color(0xaeb4c2), color(0x767d8e), color(0x38bdf8),
+         color(0x38bdf8, 46), color(0x06131c), color(0xff4757), color(0x171410), color(0x382a1a), color(0x343948)},
+        {color(0x0c0d10), color(0x15171d), color(0x1c1f27), color(0x252934), color(0x2c313d),
+         color(0x414859), color(0xf5f2ea), color(0xaeb4c2), color(0x767d8e), color(0x2dd4a0),
+         color(0x2dd4a0, 46), color(0x051610), color(0xff4757), color(0x171410), color(0x382a1a), color(0x343948)},
+        {color(0x0c0d10), color(0x15171d), color(0x1c1f27), color(0x252934), color(0x2c313d),
+         color(0x414859), color(0xf5f2ea), color(0xaeb4c2), color(0x767d8e), color(0xff5c7c),
+         color(0xff5c7c, 46), color(0x1a060b), color(0xff4757), color(0x171410), color(0x382a1a), color(0x343948)},
+    };
+    static const Palette ceramic[4] = {
         {color(0xeae5dc), color(0xdfd9cd), color(0xf7f4ed), color(0xffffff), color(0xccc4b5),
          color(0xaba291), color(0x16171b), color(0x494c55), color(0x73767f), color(0xe6481e),
          color(0xe6481e, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xfff9ea), color(0xc3bbb0)},
+        {color(0xeae5dc), color(0xdfd9cd), color(0xf7f4ed), color(0xffffff), color(0xccc4b5),
+         color(0xaba291), color(0x16171b), color(0x494c55), color(0x73767f), color(0x2563eb),
+         color(0x2563eb, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xfff9ea), color(0xc3bbb0)},
+        {color(0xeae5dc), color(0xdfd9cd), color(0xf7f4ed), color(0xffffff), color(0xccc4b5),
+         color(0xaba291), color(0x16171b), color(0x494c55), color(0x73767f), color(0x15803d),
+         color(0x15803d, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xfff9ea), color(0xc3bbb0)},
+        {color(0xeae5dc), color(0xdfd9cd), color(0xf7f4ed), color(0xffffff), color(0xccc4b5),
+         color(0xaba291), color(0x16171b), color(0x494c55), color(0x73767f), color(0x7e22ce),
+         color(0x7e22ce, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xfff9ea), color(0xc3bbb0)},
+    };
+    static const Palette vfd[4] = {
         {color(0x03080a), color(0x071115), color(0x09171c), color(0x0e242b), color(0x133540),
          color(0x1f5563), color(0x72ffe0), color(0x36b8a2), color(0x1e6b62), color(0x38f2c6),
          color(0x38f2c6, 41), color(0x03120f), color(0xff4a5e), color(0x040e12), color(0x38f2c6), color(0x0f2c33)},
+        {color(0x090602), color(0x120c04), color(0x181005), color(0x241808), color(0x3d290a),
+         color(0x664512), color(0xffd97d), color(0xcc8e28), color(0x7a5314), color(0xffb020),
+         color(0xffb020, 44), color(0x170e02), color(0xff4a5e), color(0x0f0a03), color(0xffb020), color(0x2e1f08)},
+        {color(0x030905), color(0x061209), color(0x08180d), color(0x0d2614), color(0x113b1e),
+         color(0x1d6132), color(0x8affaa), color(0x32b85b), color(0x1b6934), color(0x39e868),
+         color(0x39e868, 41), color(0x031408), color(0xff4a5e), color(0x041007), color(0x39e868), color(0x0d2e17)},
+        {color(0x03080b), color(0x061016), color(0x08161e), color(0x0d2330), color(0x123542),
+         color(0x1e576b), color(0xb3f2ff), color(0x43a8c7), color(0x226075), color(0x5ce1ff),
+         color(0x5ce1ff, 41), color(0x031117), color(0xff4a5e), color(0x040d13), color(0x5ce1ff), color(0x0e2a36)},
     };
-    return palettes[static_cast<int>(theme)];
+    if (theme == Theme::Ceramic) return ceramic[idx];
+    if (theme == Theme::Vfd) return vfd[idx];
+    return obsidian[idx];
 }
 
 Draw::Draw(SDL_Renderer* target, std::filesystem::path directory)
@@ -62,6 +112,8 @@ Draw::Draw(SDL_Renderer* target, std::filesystem::path directory)
 
 Draw::~Draw()
 {
+    if (phosphorMask)
+        SDL_DestroyTexture(phosphorMask);
     for (const auto& entry : artCache)
         SDL_DestroyTexture(entry.second);
     for (auto* texture : vuDials)
@@ -74,7 +126,7 @@ Draw::~Draw()
     for (auto [key, value] : fonts)
         if (value)
             TTF_CloseFont(value);
-    for (auto [size, value] : fallbackFonts)
+    for (auto [key, value] : fallbackFonts)
         if (value)
             TTF_CloseFont(value);
 }
@@ -132,10 +184,64 @@ void Draw::round(Rect r, float radius, Color c)
     fan(renderer, {r.x + r.w / 2, r.y + r.h / 2}, points, c);
 }
 
+void Draw::strokeRound(Rect r, float radius, Color c, float edge)
+{
+    if (r.w <= 0 || r.h <= 0 || edge <= 0 || !c.a)
+        return;
+    if (edge * 2 >= r.w || edge * 2 >= r.h) {
+        round(r, radius, c);
+        return;
+    }
+    if (radius <= 2) {
+        rect({r.x, r.y, r.w, edge}, c);
+        rect({r.x, r.y + r.h - edge, r.w, edge}, c);
+        rect({r.x, r.y + edge, edge, r.h - edge * 2}, c);
+        rect({r.x + r.w - edge, r.y + edge, edge, r.h - edge * 2}, c);
+        return;
+    }
+    const float outerR = std::min({r.w / 2, r.h / 2, radius});
+    const Rect inner = inset(r, edge);
+    const float innerR = std::min({inner.w / 2, inner.h / 2, std::max(0.f, outerR - edge)});
+    const SDL_FPoint outerCenters[] = {
+        {r.x + r.w - outerR, r.y + outerR}, {r.x + r.w - outerR, r.y + r.h - outerR},
+        {r.x + outerR, r.y + r.h - outerR}, {r.x + outerR, r.y + outerR},
+    };
+    const SDL_FPoint innerCenters[] = {
+        {inner.x + inner.w - innerR, inner.y + innerR}, {inner.x + inner.w - innerR, inner.y + inner.h - innerR},
+        {inner.x + innerR, inner.y + inner.h - innerR}, {inner.x + innerR, inner.y + innerR},
+    };
+    const auto tint = vectorColor(c);
+    constexpr int segs = 6;
+    constexpr int ringPts = 4 * (segs + 1);
+    SDL_Vertex vertices[ringPts * 2];
+    int indices[ringPts * 6];
+    int idx = 0;
+    for (int corner = 0; corner < 4; ++corner) {
+        for (int i = 0; i <= segs; ++i) {
+            const float angle = (corner - 1 + i / static_cast<float>(segs)) * pi / 2;
+            const float ca = std::cos(angle), sa = std::sin(angle);
+            vertices[2 * idx] = {{outerCenters[corner].x + ca * outerR, outerCenters[corner].y + sa * outerR}, tint, {}};
+            vertices[2 * idx + 1] = {{innerCenters[corner].x + ca * innerR, innerCenters[corner].y + sa * innerR}, tint, {}};
+            const int next = (idx + 1) % ringPts;
+            const int a = 2 * idx, b = 2 * next;
+            indices[6 * idx + 0] = a;
+            indices[6 * idx + 1] = a + 1;
+            indices[6 * idx + 2] = b;
+            indices[6 * idx + 3] = a + 1;
+            indices[6 * idx + 4] = b + 1;
+            indices[6 * idx + 5] = b;
+            ++idx;
+        }
+    }
+    SDL_RenderGeometry(renderer, nullptr, vertices, ringPts * 2, indices, ringPts * 6);
+}
+
 void Draw::frame(Rect r, float radius, Color fill, Color stroke, float edge)
 {
-    round(r, radius, stroke);
-    round(inset(r, edge), std::max(0.f, radius - edge), fill);
+    if (fill.a)
+        round(inset(r, edge), std::max(0.f, radius - edge), fill);
+    if (stroke.a && edge > 0)
+        strokeRound(r, radius, stroke, edge);
 }
 
 void Draw::line(float x, float y, float x2, float y2, Color c, float width)
@@ -249,25 +355,88 @@ TTF_Font* Draw::font(Face type, Size size, int weight)
     auto* value = TTF_OpenFont((fontPath / name).string().c_str(), vfd() ? pixel[index] : standard[index]);
     if (!value) {
         SDL_Log("Cannot load font %s: %s", name, SDL_GetError());
-    } else if (vfd()) {
-        TTF_SetFontHinting(value, TTF_HINTING_MONO);
     } else {
-        auto alternate = fallbackFonts.find(size);
-        if (alternate == fallbackFonts.end())
-            alternate = fallbackFonts.emplace(
-                size, TTF_OpenFont((fontPath / "DotGothic16-Regular.ttf").string().c_str(), standard[index])).first;
-        if (alternate->second)
-            TTF_AddFallbackFont(value, alternate->second);
+        const bool isVfd = vfd();
+        if (isVfd)
+            TTF_SetFontHinting(value, TTF_HINTING_MONO);
+        const bool needFallback = !isVfd || std::string_view(name) != "DotGothic16-Regular.ttf";
+        if (needFallback) {
+            const auto fbKey = std::tuple(isVfd, size);
+            auto alternate = fallbackFonts.find(fbKey);
+            if (alternate == fallbackFonts.end()) {
+                const int fbSize = isVfd ? pixel[index] : static_cast<int>(std::lround(standard[index] * 0.92f));
+                auto* fb = TTF_OpenFont((fontPath / "DotGothic16-Regular.ttf").string().c_str(), fbSize);
+                if (fb && isVfd)
+                    TTF_SetFontHinting(fb, TTF_HINTING_MONO);
+                alternate = fallbackFonts.emplace(fbKey, fb).first;
+            }
+            if (alternate->second)
+                TTF_AddFallbackFont(value, alternate->second);
+        }
     }
     fonts.emplace(key, value);
     return value;
 }
 
+namespace {
+std::string vfdSanitize(std::string_view src)
+{
+    std::string out;
+    out.reserve(src.size());
+    for (size_t i = 0; i < src.size();) {
+        const unsigned char c0 = static_cast<unsigned char>(src[i]);
+        if (c0 == 0xE2 && i + 2 < src.size()) {
+            const unsigned char c1 = static_cast<unsigned char>(src[i + 1]);
+            const unsigned char c2 = static_cast<unsigned char>(src[i + 2]);
+            if ((c1 == 0x80 && (c2 == 0x94 || c2 == 0x93)) || (c1 == 0x88 && c2 == 0x92)) {
+                out.push_back('-');
+                i += 3;
+                continue;
+            }
+            if (c1 == 0x80 && c2 == 0xA6) {
+                out.append("...");
+                i += 3;
+                continue;
+            }
+        } else if (c0 == 0xC5 && i + 1 < src.size()) {
+            const unsigned char c1 = static_cast<unsigned char>(src[i + 1]);
+            if (c1 == 0x8D) { out.push_back('o'); i += 2; continue; }
+            if (c1 == 0x8C) { out.push_back('O'); i += 2; continue; }
+            if (c1 == 0xAB) { out.push_back('u'); i += 2; continue; }
+            if (c1 == 0xAA) { out.push_back('U'); i += 2; continue; }
+        } else if (c0 == 0xC3 && i + 1 < src.size()) {
+            const unsigned char c1 = static_cast<unsigned char>(src[i + 1]);
+            char repl = 0;
+            if (c1 == 0xA9 || c1 == 0xA8 || c1 == 0xAA || c1 == 0xAB) repl = 'e';
+            else if (c1 == 0xA1 || c1 == 0xA0 || c1 == 0xA4) repl = 'a';
+            else if (c1 == 0xB6 || c1 == 0xB3 || c1 == 0xB2) repl = 'o';
+            else if (c1 == 0xBC || c1 == 0xBA || c1 == 0xB9) repl = 'u';
+            else if (c1 == 0xAD || c1 == 0xAC || c1 == 0xAF) repl = 'i';
+            else if (c1 == 0xB1) repl = 'n';
+            else if (c1 == 0xA7) repl = 'c';
+            if (repl) {
+                out.push_back(repl);
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(src[i++]);
+    }
+    return out;
+}
+} // namespace
+
 float Draw::textWidth(std::string_view text, Size size, Face type, bool strong)
 {
     int width = 0;
-    if (auto* face = font(type, size, strong ? 700 : 400))
-        TTF_GetStringSize(face, text.data(), text.size(), &width, nullptr);
+    if (auto* face = font(type, size, strong ? 700 : 400)) {
+        if (vfd()) {
+            const std::string clean = vfdSanitize(text);
+            TTF_GetStringSize(face, clean.data(), clean.size(), &width, nullptr);
+        } else {
+            TTF_GetStringSize(face, text.data(), text.size(), &width, nullptr);
+        }
+    }
     return static_cast<float>(width);
 }
 
@@ -277,34 +446,45 @@ void Draw::label(std::string_view text, Rect r, Size size, Color ink, Face type,
         return;
     if (!weight)
         weight = strong ? 700 : 400;
-    const auto key = std::tuple(theme, type, size, vfd() ? 400 : weight, std::string(text));
+    std::string renderedText = vfd() ? vfdSanitize(text) : std::string(text);
+    const auto key = std::tuple(theme, type, size, vfd() ? 400 : weight, renderedText);
     auto found = labels.find(key);
     if (found == labels.end()) {
         auto* face = font(type, size, weight);
         if (!face)
             return;
-        auto* surface = vfd() ? TTF_RenderText_Solid(face, text.data(), text.size(), color(0xffffff))
-                              : TTF_RenderText_Blended(face, text.data(), text.size(), color(0xffffff));
+        auto* surface = vfd() ? TTF_RenderText_Solid(face, renderedText.data(), renderedText.size(), color(0xffffff))
+                              : TTF_RenderText_Blended(face, renderedText.data(), renderedText.size(), color(0xffffff));
         if (!surface)
             return;
         TextImage image{SDL_CreateTextureFromSurface(renderer, surface),
-                        static_cast<float>(surface->w), static_cast<float>(surface->h)};
+                        static_cast<float>(surface->w), static_cast<float>(surface->h), ++labelTick};
         SDL_DestroySurface(surface);
         if (!image.texture)
             return;
         SDL_SetTextureScaleMode(image.texture, vfd() ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
-        if (labels.size() >= 640) {
-            for (const auto& entry : labels)
-                SDL_DestroyTexture(entry.second.texture);
-            labels.clear();
+        if (labels.size() >= 768) {
+            std::vector<std::pair<Uint64, decltype(labels)::iterator>> entries;
+            entries.reserve(labels.size());
+            for (auto it = labels.begin(); it != labels.end(); ++it)
+                entries.emplace_back(it->second.lastUsed, it);
+            const size_t evict = 256;
+            std::nth_element(entries.begin(), entries.begin() + evict, entries.end(),
+                             [](const auto& a, const auto& b) { return a.first < b.first; });
+            for (size_t i = 0; i < evict; ++i) {
+                SDL_DestroyTexture(entries[i].second->second.texture);
+                labels.erase(entries[i].second);
+            }
         }
         found = labels.emplace(key, image).first;
+    } else {
+        found->second.lastUsed = ++labelTick;
     }
 
     const auto image = found->second;
     SDL_SetTextureColorMod(image.texture, ink.r, ink.g, ink.b);
     const float w = std::min(image.w, r.w);
-    const float h = std::min(image.h, r.h);
+    const float h = image.h;
     const float x = align == Align::Center ? r.x + even((r.w - w) / 2)
                   : align == Align::Right ? r.x + r.w - w : r.x;
     const float y = r.y + even((r.h - h) / 2);
@@ -331,11 +511,22 @@ SDL_Texture* Draw::iconTexture(std::string_view name, int pixels)
         return found->second;
     SDL_Surface* surface = nullptr;
     if (pixels) {
-        const auto match = [name, pixels](const PixelAsset& asset) {
-            return asset.name == name && asset.size == pixels / 2;
+        const auto findPixel = [name](int grid) -> const PixelAsset* {
+            for (const auto& asset : pixelAssets)
+                if (asset.name == name && asset.size == grid)
+                    return &asset;
+            return nullptr;
         };
-        if (const auto found = std::ranges::find_if(pixelAssets, match); found != std::end(pixelAssets)) {
-            surface = SDL_CreateSurface(pixels, pixels, SDL_PIXELFORMAT_RGBA32);
+        const PixelAsset* found = findPixel(pixels / 2);
+        if (!found)
+            found = findPixel(16);
+        if (!found)
+            found = findPixel(24);
+        if (!found)
+            found = findPixel(8);
+        if (found) {
+            const int dim = found->size * 2;
+            surface = SDL_CreateSurface(dim, dim, SDL_PIXELFORMAT_RGBA32);
             if (surface) {
                 SDL_ClearSurface(surface, 0, 0, 0, 0);
                 for (int row = 0; row < found->size; ++row)
@@ -389,8 +580,8 @@ void Draw::art(const Track* track, Rect r, float corner)
     }
     const bool hero = r.w == 544;
     const int side = hero ? 544 : 256;
-    const auto key = track ? std::tuple(track->art, track->colors, Theme::Obsidian, side)
-        : std::tuple(std::string_view(), std::array<std::string_view, 3>{}, theme, side);
+    const auto key = track ? std::tuple(track->art, track->colors, Theme::Obsidian, 0, side)
+        : std::tuple(std::string_view(), std::array<std::string_view, 3>{}, theme, accentIndex, side);
     auto found = artCache.find(key);
     if (found == artCache.end()) {
         auto* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, side, side);
@@ -405,11 +596,17 @@ void Draw::art(const Track* track, Rect r, float corner)
         found = artCache.emplace(key, texture).first;
     }
     if (hero) {
-        round(r, corner, p().strong);
+        const float borderCorner = vfd() ? 2.f : corner;
+        strokeRound(r, borderCorner, p().strong, 2);
         r = inset(r, 2);
-        corner -= 2;
+        corner = std::max(0.f, borderCorner - 2);
+    } else if (vfd()) {
+        corner = 2.f;
     }
-    roundedTexture(found->second, r, corner);
+    if (corner <= 2.f)
+        SDL_RenderTexture(renderer, found->second, nullptr, &r);
+    else
+        roundedTexture(found->second, r, corner);
 }
 
 void Draw::roundedTexture(SDL_Texture* value, Rect r, float corner)
@@ -521,13 +718,51 @@ void Draw::artwork(const Track* track, Rect r)
 
 void Draw::phosphor(Rect area)
 {
-    if (!vfd())
+    if (!vfd() || area.w <= 0 || area.h <= 0)
         return;
-    paint(color(0x000000, 50));
-    std::vector<Rect> lines;
-    for (int y = static_cast<int>(area.y) + 1; y < area.y + area.h; y += 2)
-        lines.push_back({area.x, static_cast<float>(y), area.w, 1});
-    SDL_RenderFillRects(renderer, lines.data(), static_cast<int>(lines.size()));
+    if (!phosphorMask) {
+        constexpr int W = 1024, H = 768;
+        if (auto* surface = SDL_CreateSurface(W, H, SDL_PIXELFORMAT_RGBA32)) {
+            auto* pixels = static_cast<Uint8*>(surface->pixels);
+            for (int y = 0; y < H; ++y) {
+                const float ny = (y + 0.5f - H * 0.5f) / (H * 0.5f);
+                const bool hLine = (y & 1) == 0;
+                auto* row = pixels + y * surface->pitch;
+                for (int x = 0; x < W; ++x) {
+                    const float nx = (x + 0.5f - W * 0.5f) / (W * 0.5f);
+                    const bool vLine = (x & 1) == 0;
+                    const float dist = std::hypot(nx, ny);
+                    const float vig = dist > 0.62f ? std::clamp((dist - 0.62f) / 0.38f, 0.f, 1.f) * 0.42f : 0.f;
+                    // Combine horizontal (0.34), vertical (0.30), and radial vignette over-blend
+                    float pass = 1.f;
+                    if (hLine) pass *= (1.f - 0.34f);
+                    if (vLine) pass *= (1.f - 0.30f);
+                    pass *= (1.f - vig);
+                    const Uint8 a = static_cast<Uint8>(std::lround((1.f - pass) * 255.f));
+                    row[x * 4 + 0] = 0;
+                    row[x * 4 + 1] = 0;
+                    row[x * 4 + 2] = 0;
+                    row[x * 4 + 3] = a;
+                }
+            }
+            phosphorMask = SDL_CreateTextureFromSurface(renderer, surface);
+            SDL_DestroySurface(surface);
+            if (phosphorMask) {
+                SDL_SetTextureBlendMode(phosphorMask, SDL_BLENDMODE_BLEND);
+                SDL_SetTextureScaleMode(phosphorMask, SDL_SCALEMODE_NEAREST);
+            }
+        }
+    }
+    if (!phosphorMask)
+        return;
+    const Rect clipped{
+        std::clamp(area.x, 0.f, 1024.f),
+        std::clamp(area.y, 0.f, 768.f),
+        std::clamp(area.x + area.w, 0.f, 1024.f) - std::clamp(area.x, 0.f, 1024.f),
+        std::clamp(area.y + area.h, 0.f, 768.f) - std::clamp(area.y, 0.f, 768.f),
+    };
+    if (clipped.w > 0 && clipped.h > 0)
+        SDL_RenderTexture(renderer, phosphorMask, &clipped, &clipped);
 }
 
 void Draw::texture(SDL_Texture* value, Rect target, float opacity)

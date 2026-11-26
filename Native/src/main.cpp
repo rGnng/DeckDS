@@ -1,6 +1,7 @@
 #include "studio.hpp"
 
 #include <SDL3/SDL_main.h>
+#include <SDL3_image/SDL_image.h>
 
 #include <algorithm>
 #include <cmath>
@@ -86,10 +87,12 @@ public:
         const float pixelRatio = static_cast<float>(pixelWidth) / width;
         if (top) {
             SDL_SetRenderTarget(renderer, top);
+            SDL_SetRenderScale(renderer, 1.f, 1.f);
             ui.upper(*draw, fade);
         }
         if (bottom) {
             SDL_SetRenderTarget(renderer, bottom);
+            SDL_SetRenderScale(renderer, 1.f, 1.f);
             ui.lower(*draw);
         }
         SDL_SetRenderTarget(renderer, nullptr);
@@ -105,7 +108,11 @@ public:
                                  1024 * scale, 768 * scale};
             if (kind == Pane::Lower) lower = placement;
             else upper = placement;
-            draw->texture(bottom ? bottom : top, placement);
+            auto* panel = bottom ? bottom : top;
+            const float backingScale = scale * pixelRatio;
+            const bool integerScale = std::abs(backingScale - std::round(backingScale)) < .01f && backingScale >= 1.f;
+            SDL_SetTextureScaleMode(panel, integerScale ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
+            draw->texture(panel, placement);
         }
         SDL_RenderPresent(renderer);
     }
@@ -126,13 +133,29 @@ private:
 
 };
 
-SDL_Keycode controllerKey(Uint8 button)
+SDL_Keycode controllerKey(SDL_Gamepad* pad, Uint8 button)
 {
+    if (button == SDL_GAMEPAD_BUTTON_SOUTH || button == SDL_GAMEPAD_BUTTON_EAST ||
+        button == SDL_GAMEPAD_BUTTON_WEST || button == SDL_GAMEPAD_BUTTON_NORTH) {
+        const auto label = pad ? SDL_GetGamepadButtonLabel(pad, static_cast<SDL_GamepadButton>(button))
+                               : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
+        switch (label) {
+        case SDL_GAMEPAD_BUTTON_LABEL_A: return SDLK_RETURN;
+        case SDL_GAMEPAD_BUTTON_LABEL_B: return SDLK_B;
+        case SDL_GAMEPAD_BUTTON_LABEL_X: return SDLK_X;
+        case SDL_GAMEPAD_BUTTON_LABEL_Y: return SDLK_Y;
+        default: break;
+        }
+        // Fallback: RG DS Plus / Nintendo physical face layout (East=A, South=B, North=X, West=Y)
+        switch (button) {
+        case SDL_GAMEPAD_BUTTON_EAST: return SDLK_RETURN;
+        case SDL_GAMEPAD_BUTTON_SOUTH: return SDLK_B;
+        case SDL_GAMEPAD_BUTTON_NORTH: return SDLK_X;
+        case SDL_GAMEPAD_BUTTON_WEST: return SDLK_Y;
+        default: break;
+        }
+    }
     switch (button) {
-    case SDL_GAMEPAD_BUTTON_SOUTH: return SDLK_RETURN;
-    case SDL_GAMEPAD_BUTTON_EAST: return SDLK_B;
-    case SDL_GAMEPAD_BUTTON_WEST: return SDLK_Y;
-    case SDL_GAMEPAD_BUTTON_NORTH: return SDLK_X;
     case SDL_GAMEPAD_BUTTON_DPAD_UP: return SDLK_UP;
     case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return SDLK_DOWN;
     case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return SDLK_LEFT;
@@ -226,6 +249,9 @@ int run(bool separate, bool kiosk)
                 break;
             case SDL_EVENT_KEY_DOWN:
             case SDL_EVENT_KEY_UP:
+                for (const auto& view : windows)
+                    if (view->kind == Window::Pane::Both)
+                        view->studio.keyVisual(app, event.key.key, event.type == SDL_EVENT_KEY_DOWN);
                 app.key(event.key.key, event.type == SDL_EVENT_KEY_DOWN, event.key.repeat);
                 break;
             case SDL_EVENT_TEXT_INPUT:
@@ -242,19 +268,22 @@ int run(bool separate, bool kiosk)
                 app.cancelInput();
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-            case SDL_EVENT_GAMEPAD_BUTTON_UP:
-                if (const auto key = controllerKey(event.gbutton.button); key != SDLK_UNKNOWN)
+            case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+                const auto found = gamepads.find(event.gbutton.which);
+                SDL_Gamepad* pad = found != gamepads.end() ? found->second : nullptr;
+                if (const auto key = controllerKey(pad, event.gbutton.button); key != SDLK_UNKNOWN)
                     app.key(key, event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN, false, true);
                 break;
+            }
             case SDL_EVENT_GAMEPAD_AXIS_MOTION:
                 if (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX)
                     app.analog(event.gaxis.value / 32768.f);
                 if (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || event.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
                     auto& sticky = event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? triggerLeft : triggerRight;
-                    const bool down = event.gaxis.value > 18000;
-                    if (down && !sticky)
+                    const bool down = sticky ? event.gaxis.value > 12000 : event.gaxis.value > 18000;
+                    if (down != sticky)
                         app.key(event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? SDLK_LEFTBRACKET : SDLK_RIGHTBRACKET,
-                                true, false, true);
+                                down, false, true);
                     sticky = down;
                 }
                 break;
@@ -279,6 +308,7 @@ int run(bool separate, bool kiosk)
                     if (view->kind == Window::Pane::Both) {
                         view->studio.mouseButton(app, event.button.button, down, x, y);
                     } else if (event.button.button == SDL_BUTTON_LEFT &&
+                               view->lower.w > 0 && view->lower.h > 0 &&
                                (down ? inside(view->lower, x, y) : view->pointerDown)) {
                         app.pointer((x - view->lower.x) * 1024 / view->lower.w,
                                     (y - view->lower.y) * 768 / view->lower.h, down ? 0 : 2);
@@ -290,7 +320,7 @@ int run(bool separate, bool kiosk)
                 if (auto* view = findWindow(event.motion.windowID); view) {
                     if (view->kind == Window::Pane::Both)
                         view->studio.mouseMotion(app, event.motion.x, event.motion.y);
-                    else if (view->pointerDown)
+                    else if (view->pointerDown && view->lower.w > 0 && view->lower.h > 0)
                         app.pointer((event.motion.x - view->lower.x) * 1024 / view->lower.w,
                                     (event.motion.y - view->lower.y) * 768 / view->lower.h, 1);
                 }
@@ -304,12 +334,13 @@ int run(bool separate, bool kiosk)
             if (enteringText) SDL_StartTextInput(textWindow);
             else SDL_StopTextInput(textWindow);
         }
-        const Uint64 now = SDL_GetTicksNS();
-        const double dt = std::min((now - tick) / 1.e9, .1);
-        if (dt < 1.0 / 75) {
-            SDL_Delay(1);
-            continue;
+        const Uint64 frameTargetNs = app.displaysOff() ? 50'000'000ULL : 15'500'000ULL;
+        Uint64 now = SDL_GetTicksNS();
+        if (now - tick < frameTargetNs) {
+            SDL_DelayNS(frameTargetNs - (now - tick));
+            now = SDL_GetTicksNS();
         }
+        const double dt = std::min((now - tick) / 1.e9, .1);
         tick = now;
         app.update(dt);
         for (const auto& window : windows) {
@@ -325,24 +356,79 @@ int run(bool separate, bool kiosk)
     }
     return 0;
 }
+int dumpViews(const std::filesystem::path& outDir)
+{
+    const char* base = SDL_GetBasePath();
+    if (!base)
+        return 1;
+    std::filesystem::create_directories(outDir);
+    SDL_Window* win = SDL_CreateWindow("DeckDS Snapshot", 1024, 768, SDL_WINDOW_HIDDEN);
+    if (!win)
+        return 1;
+    SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
+    if (!ren) {
+        SDL_DestroyWindow(win);
+        return 1;
+    }
+    SDL_Texture* topTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, 1024, 768);
+    SDL_Texture* botTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, 1024, 768);
+    SDL_Texture* fadeTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, 1024, 768);
+    if (fadeTex)
+        SDL_SetTextureBlendMode(fadeTex, SDL_BLENDMODE_BLEND);
+
+    {
+        Draw draw(ren, std::filesystem::path(base) / "fonts");
+        DeckUi ui;
+        const char* names[15] = {
+            "00_deck_jp", "01_albums_minus1_play", "02_albums_search_osk", "03_songs_star_nodate",
+            "04_songs_bottom_scroll", "05_order_songs", "06_artist_detail", "07_playlist_detail",
+            "08_playlist_picker", "09_settings_accents_sfx", "10_vfd_amber_vu_jp", "11_ceramic_cobalt_info",
+            "12_settings_lang_clock_12h", "13_settings_japanese_ui", "14_order_songs_japanese_ui"
+        };
+        for (int i = 0; i < 15; ++i) {
+            ui.configureSnapshot(i);
+            SDL_SetRenderTarget(ren, topTex);
+            ui.upper(draw, fadeTex);
+            if (SDL_Surface* sTop = SDL_RenderReadPixels(ren, nullptr)) {
+                IMG_SavePNG(sTop, (outDir / (std::string(names[i]) + "_top.png")).string().c_str());
+                SDL_DestroySurface(sTop);
+            }
+            SDL_SetRenderTarget(ren, botTex);
+            ui.lower(draw);
+            if (SDL_Surface* sBot = SDL_RenderReadPixels(ren, nullptr)) {
+                IMG_SavePNG(sBot, (outDir / (std::string(names[i]) + "_bottom.png")).string().c_str());
+                SDL_DestroySurface(sBot);
+            }
+        }
+    }
+    for (auto* t : {topTex, botTex, fadeTex})
+        if (t) SDL_DestroyTexture(t);
+    SDL_DestroyRenderer(ren);
+    SDL_DestroyWindow(win);
+    return 0;
+}
 }
 
 int main(int argc, char** argv)
 {
     bool separate = false, kiosk = false;
+    std::filesystem::path dumpDir;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         if (arg == "--panels") separate = true;
         else if (arg == "--kiosk") kiosk = separate = true;
+        else if (arg == "--dump-views" && i + 1 < argc) dumpDir = argv[++i];
         else {
-            std::cout << "Usage: DeckDS [--panels | --kiosk]\n";
+            std::cout << "Usage: DeckDS [--panels | --kiosk | --dump-views <dir>]\n";
             return arg == "--help" ? 0 : 2;
         }
     }
 
     SDL_SetAppMetadata("DeckDS", "0.1", "org.deckds.native");
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
+    const SDL_InitFlags flags = dumpDir.empty() ? (SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)
+                                                : SDL_INIT_VIDEO;
+    if (!SDL_Init(flags)) {
         SDL_Log("SDL initialization failed: %s", SDL_GetError());
         return 1;
     }
@@ -351,7 +437,7 @@ int main(int argc, char** argv)
         SDL_Quit();
         return 1;
     }
-    const int result = run(separate, kiosk);
+    const int result = dumpDir.empty() ? run(separate, kiosk) : dumpViews(dumpDir);
     TTF_Quit();
     SDL_Quit();
     return result;

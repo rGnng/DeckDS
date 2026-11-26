@@ -49,6 +49,8 @@ public:
     int current = 0;
     int volume = 76;
     int repeat = 0;
+    int sfxVolume = 1; // 0 = Low, 1 = Mid, 2 = High
+    bool sfxSpeaker = false; // false = Current Output, true = Built-in Speaker
     bool shuffle = false, playing = false, mute = false, sfx = true;
     bool largeLibrary = false;
     unsigned catalogRevision = 0;
@@ -74,14 +76,18 @@ public:
 
 private:
     SDL_AudioStream* output = nullptr;
+    SDL_AudioStream* speakerStream = nullptr;
     double synthesisTime = 0;
     struct Tone { const SfxAsset* sound; int length, age; };
     std::vector<Tone> tones;
-    bool audioUnavailable = false;
+    Uint64 lastDownNs = 0;
+    int lastDownQueuedFrames = 0;
+    bool audioUnavailable = false, speakerUnavailable = false;
+    int queuedFrames(SDL_AudioStream* stream) const;
     void feedAudio();
     void start(int index);
     void stop();
-    void resetAudio();
+    void resetAudio(bool flushStream = true);
 };
 
 std::string timecode(double seconds);

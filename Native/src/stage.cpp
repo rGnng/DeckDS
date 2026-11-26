@@ -66,7 +66,7 @@ void vu(Draw& d, float x, float level, float held, std::string_view channel)
         d.clip(inset(r, 2));
         for (int gx = 8; gx < r.w - 8; gx += 8)
             for (int gy = 8; gy < r.h - 8; gy += 8)
-                d.rect({x + gx, r.y + gy, 4, 4}, color(0x081b21));
+                d.rect({x + gx, r.y + gy, 4, 4}, mix(p.vuBase, p.wave, .45f));
 
         constexpr int segments = 24;
         const int lit = static_cast<int>(std::lround(level * segments));
@@ -128,27 +128,31 @@ void spectrum(Draw& d, const Meter& meter)
     const auto& p = d.p();
     const bool ceramic = d.theme == Theme::Ceramic;
     constexpr float oscY = 64 + 112;
+    constexpr float oscScale = 112;
     constexpr float baseline = 768 - 138;
     constexpr float maxH = 344;
+    d.clip({24, 72, 976, 208});
     d.rect({24, oscY, 976, 2}, p.border);
     if (d.vfd()) {
         for (int x = 24; x < 1000; x += 8) {
             const int index = (x - 24) * 255 / 976;
-            const float y = std::round((oscY + meter.wave[index] * 164) / 8) * 8;
-            d.rect({static_cast<float>(x), oscY, 6, 6}, color(0x092026));
+            const float y = std::clamp(std::round((oscY + meter.wave[index] * oscScale) / 8) * 8, 72.f, 272.f);
+            d.rect({static_cast<float>(x), oscY, 6, 6}, mix(p.bg, p.wave, .65f));
             d.rect({static_cast<float>(x), y, 6, 6}, p.text);
         }
     } else {
-        float px = 24, py = oscY + meter.wave[0] * 164;
+        float px = 24, py = std::clamp(oscY + meter.wave[0] * oscScale, 74.f, 278.f);
         for (size_t i = 1; i < meter.wave.size(); ++i) {
             const float x = 24 + 976 * i / static_cast<float>(meter.wave.size() - 1);
-            const float y = oscY + meter.wave[i] * 164;
+            const float y = std::clamp(oscY + meter.wave[i] * oscScale, 74.f, 278.f);
             d.line(px, py, x, y, alpha(p.text, .78f), 2);
             px = x;
             py = y;
         }
-        d.rect({24, baseline, 976, 2}, p.border);
     }
+    d.unclip();
+    if (!d.vfd())
+        d.rect({24, baseline, 976, 2}, p.border);
 
     for (int i = 0; i < 28; ++i) {
         const float start = even(24 + i * 976 / 28.f) + 4;
@@ -159,7 +163,7 @@ void spectrum(Draw& d, const Meter& meter)
             for (int segment = 0; segment < 22; ++segment) {
                 const auto ink = segment == peak && lit > 1 ? p.text
                     : segment < lit ? (segment >= 18 ? p.danger : p.accent)
-                    : segment >= 18 ? alpha(p.danger, .12f) : color(0x092128);
+                    : segment >= 18 ? alpha(p.danger, .12f) : mix(p.bg, p.wave, .68f);
                 d.rect({start, baseline - (segment + 1) * 16, width, 12}, ink);
             }
         } else {
@@ -167,13 +171,17 @@ void spectrum(Draw& d, const Meter& meter)
             const Color dark = ceramic ? color(0xc8c0b2) : color(0x222630);
             const Color mid = ceramic ? color(0x8b857a) : color(0x414859);
             const Color high = ceramic ? color(0x3f424a) : color(0x8a92a4);
-            const auto tintAt = [&](float height) {
-                const float t = height / maxH;
-                if (t < .28f) return mix(dark, mid, t / .28f);
-                if (t < .68f) return mix(mid, high, (t - .28f) / .40f);
-                return mix(high, p.accent, (t - .68f) / .32f);
-            };
-            d.gradient({start, baseline - bar, width, bar}, tintAt(bar), dark);
+            const float stops[] = {0.f, .28f * maxH, .68f * maxH, maxH};
+            const Color palette[] = {dark, mid, high, p.accent};
+            for (int s = 0; s < 3; ++s) {
+                if (bar <= stops[s])
+                    break;
+                const float lo = stops[s];
+                const float hi = std::min(bar, stops[s + 1]);
+                const float span = stops[s + 1] - stops[s];
+                const Color topColor = mix(palette[s], palette[s + 1], (hi - lo) / span);
+                d.gradient({start, baseline - hi, width, hi - lo}, topColor, palette[s]);
+            }
             d.rect({start, baseline - std::max(8.f, even(meter.bandPeak[i] * maxH)) - 8, width, 4},
                    meter.bandPeak[i] > .62f ? p.accent : p.dim);
         }
@@ -238,35 +246,32 @@ void drawStage(Draw& d, const Player& player, const Meter& meter, int stage)
             d.label(track->artist, {604, 382, 396, 38}, Size::Title, p.dim, Face::Display, Align::Left, false, true, 600);
             d.label(track->album, {604, 438, 396, 32}, Size::Body, p.muted, Face::Display, Align::Left, false, true, 500);
         }
-        d.art(player.track(), topArt, 24);
+        d.art(player.track(), topArt, d.vfd() ? 2.f : 24.f);
     } else if (stage == 1) {
         vu(d, 24, meter.needle[0], meter.peak[0], "LEFT");
         vu(d, 522, meter.needle[1], meter.peak[1], "RIGHT");
     } else {
         spectrum(d, meter);
     }
-    if (d.vfd()) {
-        if (stage == 0) {
-            d.phosphor({0, 64, 1024, 54});
-            d.phosphor({0, 118, 24, 544});
-            d.phosphor({568, 118, 456, 544});
-            d.phosphor({0, 662, 1024, 106});
-        } else {
-            d.phosphor({0, 64, 1024, 704});
-        }
-    }
 }
 
-void drawTopChrome(Draw& d, const Player& player, float dockTitle)
+void drawTopChrome(Draw& d, const Player& player, float dockTitle, bool exemptCoverArt,
+                   std::string_view clockText)
 {
     const auto& p = d.p();
     const auto* track = player.track();
     d.rect({0, 0, 1024, 64}, p.elevated);
     d.rect({0, 62, 1024, 2}, p.border);
-    d.icon(track ? player.playing ? "play" : "pause" : "stop", {24, 20, 24, 24}, p.dim);
+    const float iconDim = d.vfd() ? 32.f : 24.f;
+    const float iconY = d.vfd() ? 16.f : 20.f;
+    d.icon(track ? player.playing ? "play" : "pause" : "stop", {24, iconY, iconDim, iconDim}, p.dim);
     const std::string queue = track ? twoDigits(static_cast<int>(player.history.size()) + 1) + " / " +
         twoDigits(static_cast<int>(player.history.size() + player.queue.size()) + 1) : "00 / 00";
     d.label(queue, {68, 0, 106, 62}, Size::Sub, p.dim, Face::Mono, Align::Left, false, false, 600);
+
+    const float clockW = std::max(68.f, even(d.textWidth(clockText, Size::Sub, Face::Mono, false) + 10.f));
+    const float clockX = 1000.f - clockW;
+    const float batX = clockX - 18.f - 36.f;
     if (track) {
         const auto codec = track->format.substr(0, track->format.find(' '));
         auto rate = std::string(track->rate);
@@ -274,21 +279,17 @@ void drawTopChrome(Draw& d, const Player& player, float dockTitle)
             rate.erase(zero, 2);
         d.label(std::string(codec) + " " + rate, {182, 0, 340, 62}, Size::Sub, p.dim, Face::Mono, Align::Left, false, false, 600);
         if (player.stars[player.current])
-            d.icon("star-filled", {832, 20, 24, 24}, p.dim);
+            d.icon("star-filled", {batX - 18.f - iconDim, iconY, iconDim, iconDim}, p.dim);
     }
-    d.frame({878, 22, 32, 18}, d.vfd() ? 2 : 4, p.elevated, p.dim);
-    d.rect({910, 26, 4, 8}, p.dim);
+    d.frame({batX, 22, 32, 18}, d.vfd() ? 2 : 4, p.elevated, p.dim);
+    d.rect({batX + 32.f, 26, 4, 8}, p.dim);
     if (d.vfd())
         for (int i = 0; i < 4; ++i)
-            d.rect({882.f + 6 * i, 26, 4, 10}, p.dim);
+            d.rect({batX + 4.f + 6 * i, 26, 4, 10}, p.dim);
     else
-        d.round({882, 26, 22, 10}, 2, p.dim);
+        d.round({batX + 4.f, 26, 22, 10}, 2, p.dim);
 
-    const auto now = std::time(nullptr);
-    char clock[16] = "00:00";
-    if (const auto* local = std::localtime(&now))
-        std::strftime(clock, sizeof(clock), "%H:%M", local);
-    d.label(clock, {932, 0, 68, 62}, Size::Sub, p.dim, Face::Mono, Align::Right, false, false, 600);
+    d.label(clockText, {clockX, 0, clockW, 62}, Size::Sub, p.dim, Face::Mono, Align::Right, false, false, 600);
     if (track && dockTitle > 0)
         d.label(track->title, {24, 656, 976, 48}, Size::Title, alpha(p.text, dockTitle), Face::Display, Align::Center, true, true);
 
@@ -303,8 +304,16 @@ void drawTopChrome(Draw& d, const Player& player, float dockTitle)
     } else {
         d.round({rail.x + 2, rail.y + 2, filled, 8}, 4, p.accent);
     }
-    d.phosphor({0, 0, 1024, 64});
-    d.phosphor({0, 712, 1024, 56});
+    if (d.vfd()) {
+        if (exemptCoverArt) {
+            d.phosphor({0, 0, 1024, 118});
+            d.phosphor({0, 118, 24, 544});
+            d.phosphor({568, 118, 456, 544});
+            d.phosphor({0, 662, 1024, 106});
+        } else {
+            d.phosphor({0, 0, 1024, 768});
+        }
+    }
 }
 
 void drawWaveform(Draw& d, const Player& player, Rect area)
@@ -325,11 +334,11 @@ void drawWaveform(Draw& d, const Player& player, Rect area)
             const float span = std::max(1.f, std::round(wave[source] * rows * .46f));
             for (int row = 0; row < rows; ++row) {
                 const float distance = std::abs(row - middle);
-                Color dot = color(0x07171c);
+                Color dot = mix(p.bg, p.wave, .45f);
                 if (track) {
                     if (column == cursor) dot = p.danger;
                     else if (distance <= span)
-                        dot = column < cursor ? (distance > rows * .34f ? p.danger : p.accent) : color(0x124652);
+                        dot = column < cursor ? (distance > rows * .34f ? p.danger : p.accent) : mix(p.wave, p.muted, .45f);
                 }
                 d.rect({r.x + column * 8 + 1, r.y + row * 8 + 1, 6, 6}, dot);
             }

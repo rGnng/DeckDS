@@ -55,12 +55,21 @@ Player::Player() : tracks(std::begin(demoTracks), std::end(demoTracks))
 
 Player::~Player()
 {
+    if (speakerStream)
+        SDL_DestroyAudioStream(speakerStream);
     if (output)
         SDL_DestroyAudioStream(output);
 }
 
-const Track* Player::track() const { return current < 0 ? nullptr : &tracks[current]; }
-float Player::progress() const { return track() ? static_cast<float>(seconds / track()->duration) : 0; }
+const Track* Player::track() const
+{
+    return (current < 0 || current >= static_cast<int>(tracks.size())) ? nullptr : &tracks[current];
+}
+float Player::progress() const
+{
+    const auto* t = track();
+    return (t && t->duration > 0) ? static_cast<float>(std::clamp(seconds / t->duration, 0.0, 1.0)) : 0.f;
+}
 int Player::librarySize() const { return largeLibrary ? static_cast<int>(tracks.size()) : defaultLibrarySize; }
 
 void Player::update(double dt)
@@ -91,7 +100,7 @@ void Player::stop()
     current = -1;
     seconds = 0;
     playing = false;
-    resetAudio();
+    resetAudio(tones.empty());
 }
 
 void Player::playToggle()
@@ -108,7 +117,7 @@ void Player::playToggle()
         return;
     }
     playing = !playing;
-    resetAudio();
+    resetAudio(playing && tones.empty());
 }
 
 void Player::playFrom(std::vector<int> order, int index)
@@ -156,7 +165,7 @@ void Player::previous()
 
 void Player::makeNext(int trackIndex)
 {
-    if (trackIndex < 0 || trackIndex == current)
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(tracks.size()) || trackIndex == current)
         return;
     std::erase(queue, trackIndex);
     queue.insert(queue.begin(), trackIndex);
@@ -166,7 +175,8 @@ void Player::makeNext(int trackIndex)
 void Player::append(const std::vector<int>& ids)
 {
     for (const int index : ids)
-        if (index != current && std::ranges::find(queue, index) == queue.end()) {
+        if (index >= 0 && index < static_cast<int>(tracks.size()) && index != current &&
+            std::ranges::find(queue, index) == queue.end()) {
             queue.push_back(index);
             ++catalogRevision;
         }
@@ -174,16 +184,16 @@ void Player::append(const std::vector<int>& ids)
 
 void Player::seek(float fraction)
 {
-    if (track()) {
-        seconds = std::clamp(fraction, 0.f, 1.f) * track()->duration;
-        resetAudio();
+    if (const auto* t = track()) {
+        seconds = std::clamp(fraction, 0.f, .998f) * t->duration;
+        resetAudio(tones.empty());
     }
 }
 
 void Player::seekSeconds(float delta)
 {
-    if (track())
-        seek(static_cast<float>((seconds + delta) / track()->duration));
+    if (const auto* t = track(); t && t->duration > 0)
+        seek(static_cast<float>((seconds + delta) / t->duration));
 }
 
 void Player::adjustVolume(int delta)
@@ -194,27 +204,53 @@ void Player::adjustVolume(int delta)
 
 void Player::toggleStar(int index)
 {
-    if (index >= 0) {
+    if (index >= 0 && index < static_cast<int>(stars.size())) {
         stars[index] = !stars[index];
         ++catalogRevision;
     }
 }
 
-void Player::resetAudio()
+void Player::resetAudio(bool flushStream)
 {
     synthesisTime = seconds;
-    if (output)
+    if (output && flushStream)
         SDL_ClearAudioStream(output);
+}
+
+int Player::queuedFrames(SDL_AudioStream* stream) const
+{
+    if (!stream)
+        return 0;
+    const int bytes = SDL_GetAudioStreamQueued(stream);
+    return bytes > 0 ? bytes / static_cast<int>(2 * sizeof(float)) : 0;
 }
 
 void Player::chime(std::string_view cue)
 {
-    if (!sfx)
+    if (!sfx || cue.empty())
         return;
+    const Uint64 nowNs = SDL_GetTicksNS();
+    SDL_AudioStream* fxTarget = sfxSpeaker ? speakerStream : output;
+    const int curQueued = queuedFrames(fxTarget);
+    const bool isUp = cue == "release" || cue.ends_with(":up") || cue == "star" || cue == "unstar";
+    const bool isDown = cue == "press" || cue.ends_with(":down");
+    int extraDelay = 0;
+    if (isUp && lastDownNs > 0) {
+        constexpr int minStepSamples = sampleRate * 52 / 1000; // 52 ms distinct two-step spacing
+        const auto elapsedSamples = static_cast<Sint64>((nowNs - lastDownNs) * sampleRate / 1'000'000'000ULL);
+        const Sint64 audibleGap = elapsedSamples + (curQueued - lastDownQueuedFrames);
+        if (audibleGap < minStepSamples)
+            extraDelay = static_cast<int>(minStepSamples - std::max<Sint64>(0, audibleGap));
+    }
+    if (isDown) {
+        lastDownNs = nowNs;
+        lastDownQueuedFrames = curQueued;
+    }
     for (const auto& tone : sfxAssets)
-        if (tone.cue == cue && tones.size() < 24)
+        if (tone.cue == cue && tones.size() < 32)
             tones.push_back({&tone, static_cast<int>(tone.duration * sampleRate),
-                             -static_cast<int>(tone.delay * sampleRate)});
+                             -static_cast<int>(tone.delay * sampleRate) - extraDelay});
+    feedAudio();
 }
 
 void Player::chime(std::string_view cue, bool release)
@@ -256,8 +292,9 @@ void Player::feedAudio()
 {
     if (!playing && tones.empty())
         return;
-    if (!output && !audioUnavailable) {
-        const SDL_AudioSpec spec{SDL_AUDIO_F32, 2, sampleRate};
+    const SDL_AudioSpec spec{SDL_AUDIO_F32, 2, sampleRate};
+    const bool separateSfx = sfxSpeaker && !tones.empty();
+    if ((playing || (!sfxSpeaker && !tones.empty())) && !output && !audioUnavailable) {
         output = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
         audioUnavailable = !output;
         if (output) {
@@ -267,35 +304,99 @@ void Player::feedAudio()
             SDL_Log("Demo output unavailable: %s", SDL_GetError());
         }
     }
+    if (separateSfx && !speakerStream && !speakerUnavailable) {
+        SDL_AudioDeviceID chosen = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+        int count = 0;
+        if (SDL_AudioDeviceID* devs = SDL_GetAudioPlaybackDevices(&count)) {
+            for (int i = 0; i < count; ++i) {
+                if (const char* name = SDL_GetAudioDeviceName(devs[i])) {
+                    const std::string_view sv(name);
+                    if (sv.find("Speaker") != std::string_view::npos || sv.find("speaker") != std::string_view::npos) {
+                        chosen = devs[i];
+                        break;
+                    }
+                }
+            }
+            SDL_free(devs);
+        }
+        speakerStream = SDL_OpenAudioDeviceStream(chosen, &spec, nullptr, nullptr);
+        speakerUnavailable = !speakerStream;
+        if (speakerStream)
+            SDL_ResumeAudioStreamDevice(speakerStream);
+    }
+
+    constexpr int frames = 240;
+    constexpr int chunkBytes = frames * 2 * sizeof(float);
+    const float sfxGain = sfxVolume == 0 ? 0.45f : sfxVolume == 2 ? 1.75f : 1.0f;
+
+    auto renderToneFrame = [&]() -> float {
+        float fx = 0;
+        for (auto& tone : tones) {
+            const int index = tone.age++;
+            if (index < 0 || index >= tone.length)
+                continue;
+            const auto& sound = *tone.sound;
+            const double elapsed = index / static_cast<double>(sampleRate);
+            const double ramp = std::log(sound.end / sound.start) / sound.duration;
+            const double phase = std::abs(ramp) < 1.e-8 ? sound.start * elapsed
+                : sound.start * std::expm1(ramp * elapsed) / ramp;
+            const double amplitude = elapsed < .006 ? std::lerp(.0001, sound.gain, elapsed / .006)
+                : sound.gain * std::pow(.0001 / sound.gain, (elapsed - .006) / (sound.duration - .006));
+            const double wave = sound.triangle ? (2 / std::numbers::pi) * std::asin(std::sin(phase * tau))
+                : std::sin(phase * tau);
+            fx += static_cast<float>(amplitude * wave);
+        }
+        return fx * sfxGain;
+    };
+
+    if (sfxSpeaker) {
+        if (!speakerStream) {
+            tones.clear();
+        } else if (!tones.empty()) {
+            int sfxQueued = SDL_GetAudioStreamQueued(speakerStream);
+            while (sfxQueued >= 0 && sfxQueued < chunkBytes * 4 && !tones.empty()) {
+                std::array<float, frames * 2> fxData{};
+                for (int i = 0; i < frames; ++i) {
+                    const float fx = std::clamp(renderToneFrame(), -1.f, 1.f);
+                    fxData[i * 2] = fx;
+                    fxData[i * 2 + 1] = fx;
+                }
+                std::erase_if(tones, [](const Tone& tone) { return tone.age >= tone.length; });
+                if (!SDL_PutAudioStreamData(speakerStream, fxData.data(), chunkBytes))
+                    break;
+                sfxQueued += chunkBytes;
+            }
+        }
+        if (!playing || !output)
+            return;
+        int queued = SDL_GetAudioStreamQueued(output);
+        while (queued >= 0 && queued < chunkBytes * 4) {
+            std::array<float, frames * 2> data{};
+            const float gain = mute ? 0.f : (volume / 100.f) * 0.5f;
+            for (int i = 0; i < frames; ++i) {
+                const auto signal = sample(synthesisTime);
+                data[i * 2] = std::clamp(signal[0] * gain, -1.f, 1.f);
+                data[i * 2 + 1] = std::clamp(signal[1] * gain, -1.f, 1.f);
+                synthesisTime += 1.0 / sampleRate;
+            }
+            if (!SDL_PutAudioStreamData(output, data.data(), chunkBytes))
+                break;
+            queued += chunkBytes;
+        }
+        return;
+    }
+
     if (!output) {
         tones.clear();
         return;
     }
-
-    constexpr int frames = 480;
-    constexpr int chunkBytes = frames * 2 * sizeof(float);
     int queued = SDL_GetAudioStreamQueued(output);
-    while (queued >= 0 && queued < chunkBytes * 3) {
+    while (queued >= 0 && queued < chunkBytes * 4) {
         std::array<float, frames * 2> data{};
         const float gain = mute ? 0.f : (volume / 100.f) * 0.5f;
         for (int i = 0; i < frames; ++i) {
             const auto signal = sample(synthesisTime);
-            float fx = 0;
-            for (auto& tone : tones) {
-                const int index = tone.age++;
-                if (index < 0 || index >= tone.length)
-                    continue;
-                const auto& sound = *tone.sound;
-                const double elapsed = index / static_cast<double>(sampleRate);
-                const double ramp = std::log(sound.end / sound.start) / sound.duration;
-                const double phase = std::abs(ramp) < 1.e-8 ? sound.start * elapsed
-                    : sound.start * std::expm1(ramp * elapsed) / ramp;
-                const double amplitude = elapsed < .006 ? std::lerp(.0001, sound.gain, elapsed / .006)
-                    : sound.gain * std::pow(.0001 / sound.gain, (elapsed - .006) / (sound.duration - .006));
-                const double wave = sound.triangle ? (2 / std::numbers::pi) * std::asin(std::sin(phase * tau))
-                    : std::sin(phase * tau);
-                fx += static_cast<float>(amplitude * wave);
-            }
+            const float fx = renderToneFrame();
             data[i * 2] = std::clamp(signal[0] * gain + fx, -1.f, 1.f);
             data[i * 2 + 1] = std::clamp(signal[1] * gain + fx, -1.f, 1.f);
             if (playing)

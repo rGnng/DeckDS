@@ -107,25 +107,49 @@ def svg_icons(html):
             for name, box, nodes in re.findall(pattern, html, re.S)]
 
 
-def vfd_icons(source):
-    icons = {}
-    for size in (8, 16, 24):
-        block = source.split(f"const BITMAPS_{size} = {{", 1)[1].split("\n  };", 1)[0]
-        for name, pixels in re.findall(r"'ic-([^']+)': \[(.*?)\]", block, re.S):
-            rows = re.findall(r"'([.#]+)'", pixels)
-            if len(rows) != size or any(len(row) != size for row in rows):
-                raise ValueError(f"Unexpected VFD bitmap size for {name}")
-            icons[size, name] = rows
-    for size in (16, 24):
-        if (size, "next") not in icons:
-            icons[size, "next"] = [row[::-1] for row in icons[size, "prev"]]
-
-    icons[32, "play"] = []
-    for y in range(32):
-        lit = min(22, max(2, int((12.5 - abs(y - 15.5)) * 1.75 + 0.5)))
-        icons[32, "play"].append("." * 7 + "#" * lit + "." * (25 - lit) if 4 <= y <= 27 else "." * 32)
-    icons[32, "pause"] = ["......######........######......" if 5 <= y <= 26 else "." * 32 for y in range(32)]
-    return [f"{{{cpp(name)}, {size}, {cpp(''.join(rows))}}}" for (size, name), rows in icons.items()]
+def vfd_icons(node, path):
+    source = r"""
+const fs = require('node:fs');
+const vm = require('node:vm');
+const code = fs.readFileSync(process.argv[1], 'utf8');
+const symbols = [];
+const hostSvg = { appendChild(sym) { symbols.push(sym); } };
+const context = {
+  window: {},
+  document: {
+    querySelector() { return hostSvg; },
+    createElementNS(_ns, tag) {
+      return {
+        tag,
+        attrs: {},
+        children: [],
+        setAttribute(k, v) { this.attrs[k] = v; },
+        appendChild(c) { this.children.push(c); },
+      };
+    },
+  },
+};
+vm.runInNewContext(code, context, { filename: process.argv[1] });
+const out = [];
+for (const sym of symbols) {
+  const m = /^vfd(\d+)-ic-(.+)$/.exec(sym.attrs.id || '');
+  if (!m) continue;
+  const size = Number(m[1]);
+  const name = m[2];
+  const grid = Array.from({ length: size }, () => Array(size).fill('.'));
+  const d = sym.children[0]?.attrs?.d || '';
+  for (const hit of d.matchAll(/M(\d+) (\d+)h1v1h-1z/g)) {
+    const x = Number(hit[1]), y = Number(hit[2]);
+    if (x >= 0 && x < size && y >= 0 && y < size) grid[y][x] = '#';
+  }
+  out.push({ name, size, dots: grid.map(r => r.join('')).join('') });
+}
+process.stdout.write(JSON.stringify(out));
+"""
+    icons = json.loads(subprocess.check_output([node, "-e", source, str(path)], text=True))
+    if not icons:
+        raise ValueError("Missing VFD pixel icons in the browser reference")
+    return [f"{{{cpp(icon['name'])}, {icon['size']}, {cpp(icon['dots'])}}}" for icon in icons]
 
 
 def array(type_name, name, rows):
@@ -146,7 +170,7 @@ def main():
         array("KeyAsset", "keyAssets", keyboard_rows(sys.argv[3], design / "app.js")) +
         array("PlaylistFixture", "demoPlaylists", playlist_rows(source)) +
         array("IconAsset", "svgAssets", svg_icons((design / "index.html").read_text(encoding="utf-8"))) +
-        array("PixelAsset", "pixelAssets", vfd_icons((design / "vfd-icons.js").read_text(encoding="utf-8"))),
+        array("PixelAsset", "pixelAssets", vfd_icons(sys.argv[3], design / "vfd-icons.js")),
         encoding="utf-8",
     )
 

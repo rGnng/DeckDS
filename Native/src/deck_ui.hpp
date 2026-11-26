@@ -5,15 +5,25 @@
 #include <optional>
 
 enum class PreviewScale { Fit, Integer, Studio, PixelOne, PixelTwo, Count };
+enum class Language { English, Japanese };
 
 class DeckUi {
 public:
     enum class Tab { Deck, Albums, Artists, Playlists, Songs, Queue };
     Theme theme = Theme::Obsidian;
+    Language language = Language::English;
+    std::array<int, 3> themeAccents{0, 0, 0};
+    bool clock24h = true;
+    int clockOffsetMinutes = 0;
     Player player;
     bool lid = false;
     bool showKeys = false;
     PreviewScale scaleMode = PreviewScale::Fit;
+
+    int currentAccent() const { return themeAccents[static_cast<int>(theme)]; }
+    bool jp() const { return language == Language::Japanese; }
+    std::string_view tr(std::string_view en, std::string_view ja) const { return jp() ? ja : en; }
+    std::string clockString() const;
     bool textInput() const;
     bool displaysOff() const;
     std::string_view sleepMessage() const;
@@ -28,16 +38,25 @@ public:
     void pointer(float x, float y, int phase);
     void wheel(float y);
     void cancelInput();
+    void configureSnapshot(int preset);
 
 private:
     enum class Action {
         None, Tab, Settings, Context, Scrub, Previous, Play, Next, Star, Volume, Mute, Output,
-        Stage, Shuffle, Repeat, Album, ClearSearch, Search, Grid, Order, NewPlaylist, ListPlay,
-        ListShuffle, Row, RowMenu, PlayNext, Back, Rail, Option, Key, DetailQueue, Brightness
+        Stage, Shuffle, Repeat, Album, ClearSearch, Search, Grid, Order, NewPlaylist, CreatePlaylist,
+        ListPlay, ListShuffle, Row, RowMenu, PlayNext, Back, Rail, SettingsRail, Option, Key,
+        DetailQueue, Brightness
     };
     enum class Sheet { None, Settings, Track, Info, Order, Output, Playlist };
     enum class Input { None, Search, Playlist };
+    enum class SortField { Added, Name, Year, Artist, Album, AlbumCount, SongCount };
+    struct SortSpec {
+        SortField field;
+        std::string_view label, hint, ascLabel, descLabel;
+        bool alphaMode, defaultAsc;
+    };
     struct Hit { Rect box; Action action; int data; };
+    struct LayoutHeader { float y; std::string text; bool discDivider; };
     struct Row {
         std::string title, subtitle;
         std::vector<int> ids;
@@ -45,80 +64,115 @@ private:
         int track = -1;
         Tab source = Tab::Deck;
         int playlist = -1;
+        int albumCount = 0;
+        int year = 0;
+        std::string added;
+        Rect box{};
+        bool albumTrack = false;
     };
     struct Option {
         std::string label, value;
         std::string_view icon;
+        bool active = false, member = false;
+        int id = 0;
     };
 
     static constexpr int brightnessLevels[] = {15, 30, 45, 60, 75, 90, 100};
     static constexpr Rect deckWave{38, 166, 948, 148};
     static constexpr Rect volumeTrack{112, 572, 800, 24};
+
     Tab tab = Tab::Deck;
     int stage = 0, outgoingStage = 0;
     float stageTime = 1, tabTime = 1;
-    std::array<float, 6> tabWidths{265, 107, 107, 107, 107, 107};
+    std::array<float, 6> tabWidths{260, 108, 108, 108, 108, 108};
     std::array<float, 6> tabStart = tabWidths;
+    std::array<Rect, 6> tabRects{};
+    bool tabSliding = false, tabSlideMoved = false, tabSlideCommitted = false;
+    int slideTab = 0;
+    float tabSlideDwell = 0;
+
     Meter meter;
-    int brightness = 6, output = 0;
+    int brightness = 6, output = 0, lastNonZeroVolume = 76;
     bool pocket = true, albumsInGrid = true;
     bool screenOff = false, poweredOff = false, powerDown = false, powerLong = false;
     double powerTime = 0;
     float volumeTime = 0, seekPopup = 0;
-    int sortField = 0;
+    SortField sortField = SortField::Added;
     bool ascending = false;
-    std::array<int, 6> sortFields{0, 0, 1, 0, 0, 0};
+    std::array<SortField, 6> sortFields{
+        SortField::Added, SortField::Added, SortField::Name, SortField::Added, SortField::Added, SortField::Added
+    };
     std::array<bool, 6> sortDirections{false, false, true, false, false, false};
+
     Sheet sheet = Sheet::None;
     Input input = Input::None;
     bool symbols = false, utility = false, toolFocus = false, keypad = false;
-    float utilityHeight = 0, keyboardHeight = 0;
+    float utilityAnim = 0, searchAnim = 0, keyboardHeight = 0;
+    std::array<float, 2> catBtnAnim{};
+    std::array<float, 3> detailBtnAnim{};
     std::string query, playlistName, notice;
     float noticeTime = 0;
-    int selection = 0, toolSelection = 2, keySelection = 0, sheetSelection = 0;
+    int selection = 0, toolSelection = 2, keySelection = 0, sheetSelection = 0, clockBtnFocus = 1;
     int contextTrack = -1, contextPlaylist = -1;
     std::vector<Row> details;
     std::vector<Hit> hits;
     std::optional<Hit> pressed;
     Action lastAction = Action::None;
     int lastData = 0;
-    float releaseTime = 0, pressTime = 0, pointerStartY = 0, pointerLastY = 0;
+    float releaseTime = 0, pressTime = 0, keyPressTime = 0;
+    float pointerStartX = 0, pointerStartY = 0, pointerLastX = 0, pointerLastY = 0;
     std::string_view pressVoice;
-    bool dragging = false, held = false;
+    std::map<SDL_Keycode, std::string_view> heldKeyVoices;
+    std::map<SDL_Keycode, std::pair<Action, int>> heldKeyUi;
+    bool dragging = false, held = false, listPointer = false, settingsPointer = false;
     int seekDirection = 0;
     float seekHold = 0;
     float analogPosition = 0;
-    Rect listBox{};
+    Rect listBox{}, settingsBox{12, 192, 924, 560};
     float scroll = 0, scrollFrom = 0, scrollTarget = 0, scrollTime = 1, scrollLimit = 0;
+    float settingsScroll = 0, settingsScrollFrom = 0, settingsScrollTarget = 0, settingsScrollTime = 1, settingsLimit = 0;
     float railPopup = 0;
-    int infoScroll = 0;
+    int infoScroll = 0, infoMaxScroll = 180;
     mutable std::vector<Row> cachedRows;
+    mutable std::vector<LayoutHeader> cachedHeaders;
+    mutable float cachedContentHeight = 0;
+    mutable int cachedArtistAlbumCount = 0;
     mutable unsigned cachedPlayerRevision = 0;
     mutable bool rowsValid = false;
     std::optional<Rect> hitClip;
 
+    std::vector<SortSpec> sortSpecsFor(Tab which) const;
+    SortSpec activeSortSpec() const;
     const std::vector<Row>& rows() const;
-    std::vector<Row> buildRows() const;
+    void rebuildCatalogCache() const;
     std::vector<Option> options() const;
     int gridColumns() const;
-    float rowHeight() const;
-    float rowGap() const;
+    bool isUiHeld(Action action, int data) const;
+    float activePressAmount(Action action, int data, std::optional<Rect> checkBox = std::nullopt) const;
     void tabs(Draw& d);
     void transport(Draw& d);
     void catalog(Draw& d);
     void keypadUi(Draw& d);
     void overlay(Draw& d);
+    void drawScrollbar(Draw& d, Rect rail, float pos, float limit, Action act,
+                       const std::vector<std::string>& ticks);
     void button(Draw& d, Rect r, Action action, int value, std::string_view glyph = {},
                 std::string_view label = {}, bool focus = false, bool hero = false,
                 int iconSize = 32, std::optional<Color> background = std::nullopt,
                 std::optional<Color> ink = std::nullopt, int vfdSize = 32, int corner = 14,
                 bool marker = false);
+    void expandingButton(Draw& d, Rect r, Action action, int value, std::string_view glyph,
+                         std::string_view label, float expandAnim, bool focus, bool primary = false,
+                         int iconSize = 24);
     void hit(Rect r, Action action, int data = 0);
-    std::string_view voiceFor(Action action) const;
+    std::string_view voiceFor(Action action, int data = 0) const;
     void activate(Action action, int data);
     void targetScroll(float target, bool animate = true);
+    void targetSettingsScroll(float target, bool animate = true);
     void keepSelectedVisible();
+    void keepSettingsVisible();
     void scrubRail(float y);
+    void scrubSettingsRail(float y);
     void scrubPosition(Action action, float x);
     void openInput(Input field);
     void closeInput(bool confirm);

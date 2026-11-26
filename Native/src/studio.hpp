@@ -2,6 +2,8 @@
 
 #include "deck_ui.hpp"
 
+#include <set>
+
 class Studio {
 public:
     void render(Draw& draw, DeckUi& ui, SDL_Window* window, SDL_Texture* top, SDL_Texture* bottom,
@@ -9,6 +11,7 @@ public:
     void mouseButton(DeckUi& ui, Uint8 button, bool down, float x, float y);
     void mouseMotion(DeckUi& ui, float x, float y);
     void wheel(DeckUi& ui, float x, float y, float dx, float dy, SDL_Keymod mods);
+    void keyVisual(const DeckUi& ui, SDL_Keycode key, bool down);
     void update(DeckUi& ui, double dt);
     void cancel(DeckUi& ui);
 
@@ -17,7 +20,9 @@ private:
     struct Control { Rect box; Kind kind; int code; };
     enum class Drag { None, Lower, Pan, Control };
     std::vector<Control> controls;
-    std::optional<Control> active;
+    std::optional<Control> active, releasedCtl;
+    std::set<int> heldKeyCodes;
+    float releaseFlash = 0;
     Rect workspace{}, sidebar{}, topBox{}, bottomBox{};
     Drag drag = Drag::None;
     float offsetX = 0, offsetY = 0, maxX = 0, maxY = 0, sidebarY = 0;

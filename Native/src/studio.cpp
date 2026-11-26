@@ -124,7 +124,7 @@ void Studio::render(Draw& d, DeckUi& ui, SDL_Window* window, SDL_Texture* upper,
     d.unclip();
 
     const auto& p = d.p();
-    const auto accent = colors(ui.theme).accent;
+    const auto accent = colors(ui.theme, ui.currentAccent()).accent;
     d.circle(25, 26, 4, accent);
     d.label("DECK DS", {40, 8, 180, 36}, Size::Sub, p.text, Face::Display, Align::Left, true);
     control(d, {w - 86, 5, 72, 44}, Kind::Help, 0, "Keys", ui.showKeys);
@@ -143,7 +143,9 @@ void Studio::control(Draw& d, Rect r, Kind kind, int code, std::string_view labe
 {
     controls.push_back({r, kind, code});
     const auto& p = d.p();
-    const bool down = active && active->kind == kind && active->code == code;
+    const bool down = (active && active->kind == kind && active->code == code) ||
+                      (kind == Kind::Key && heldKeyCodes.contains(code)) ||
+                      (releaseFlash > 0 && releasedCtl && releasedCtl->kind == kind && releasedCtl->code == code);
     const auto normal = kind == Kind::Key ? p.elevated : p.card;
     const auto stroke = down ? p.accent : selected ? p.dim : p.strong;
     if (down)
@@ -258,6 +260,8 @@ void Studio::moveStick(DeckUi& ui, float x, float y)
 
 void Studio::paneInput(DeckUi& ui, float x, float y, int phase)
 {
+    if (bottomBox.w <= 0 || bottomBox.h <= 0)
+        return;
     ui.pointer((x - bottomBox.x) * paneWidth / bottomBox.w, (y - bottomBox.y) * paneHeight / bottomBox.h, phase);
 }
 
@@ -288,12 +292,15 @@ void Studio::mouseButton(DeckUi& ui, Uint8 button, bool down, float x, float y)
             drag = Drag::Control;
             heldTime = 0;
             repeatTime = .36;
-            if (match->kind == Kind::Key && handlesHold(static_cast<SDL_Keycode>(match->code)))
+            if (match->kind == Kind::Key)
                 ui.key(static_cast<SDL_Keycode>(match->code), true, false, true);
             else if (match->kind == Kind::Stick)
                 moveStick(ui, x, y);
+            else
+                ui.player.chime("", false);
         } else if (ui.showKeys) {
             ui.showKeys = false;
+            ui.player.chime("back");
         } else if (inside(workspace, x, y) && inside(bottomBox, x, y)) {
             drag = Drag::Lower;
             paneInput(ui, x, y, 0);
@@ -304,10 +311,14 @@ void Studio::mouseButton(DeckUi& ui, Uint8 button, bool down, float x, float y)
     if (drag == Drag::Lower) {
         paneInput(ui, x, y, 2);
     } else if (active && drag == Drag::Control) {
+        releasedCtl = *active;
+        releaseFlash = .09f;
         if (active->kind == Kind::Key) {
             const auto key = static_cast<SDL_Keycode>(active->code);
-            if (handlesHold(key)) ui.key(key, false, false, true);
-            else if (inside(active->box, x, y)) ui.key(key, true, false, true);
+            if (inside(active->box, x, y) || handlesHold(key))
+                ui.key(key, false, false, true);
+            else
+                ui.cancelInput();
         } else if (active->kind == Kind::Stick) {
             stickX = stickY = 0;
             ui.analog(0);
@@ -316,6 +327,7 @@ void Studio::mouseButton(DeckUi& ui, Uint8 button, bool down, float x, float y)
             if (active->kind == Kind::Theme) ui.theme = static_cast<Theme>(active->code);
             if (active->kind == Kind::Help) ui.showKeys = !ui.showKeys;
             if (active->kind == Kind::Library) ui.toggleLibrary();
+            ui.player.chime("", true);
         }
         active.reset();
     }
@@ -358,6 +370,7 @@ void Studio::wheel(DeckUi& ui, float x, float y, float dx, float dy, SDL_Keymod 
 
 void Studio::update(DeckUi& ui, double dt)
 {
+    releaseFlash = std::max(0.f, releaseFlash - static_cast<float>(dt));
     if (!active || active->kind != Kind::Key || !direction(static_cast<SDL_Keycode>(active->code)))
         return;
     heldTime += dt;
@@ -367,9 +380,40 @@ void Studio::update(DeckUi& ui, double dt)
     }
 }
 
+void Studio::keyVisual(const DeckUi& ui, SDL_Keycode key, bool down)
+{
+    const auto remap = [](SDL_Keycode k) {
+        switch (k) {
+        case SDLK_Z:
+        case SDLK_KP_ENTER: return SDLK_RETURN;
+        case SDLK_C: return SDLK_X;
+        case SDLK_X:
+        case SDLK_BACKSPACE:
+        case SDLK_ESCAPE: return SDLK_B;
+        case SDLK_V: return SDLK_Y;
+        case SDLK_1: return SDLK_LEFTBRACKET;
+        case SDLK_2: return SDLK_RIGHTBRACKET;
+        case SDLK_D: return SDLK_G;
+        case SDLK_TAB: return SDLK_S;
+        case SDLK_P: return SDLK_POWER;
+        default: return k;
+        }
+    };
+    const SDL_Keycode mapped = remap(key);
+    if (down) {
+        heldKeyCodes.insert(static_cast<int>(ui.textInput() ? key : mapped));
+    } else {
+        heldKeyCodes.erase(static_cast<int>(key));
+        heldKeyCodes.erase(static_cast<int>(mapped));
+    }
+}
+
 void Studio::cancel(DeckUi& ui)
 {
     active.reset();
+    releasedCtl.reset();
+    heldKeyCodes.clear();
+    releaseFlash = 0;
     drag = Drag::None;
     stickX = stickY = 0;
     ui.cancelInput();

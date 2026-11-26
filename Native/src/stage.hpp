@@ -10,5 +10,6 @@ struct Meter {
 };
 
 void drawStage(Draw& draw, const Player& player, const Meter& meter, int stage);
-void drawTopChrome(Draw& draw, const Player& player, float dockTitle);
+void drawTopChrome(Draw& draw, const Player& player, float dockTitle, bool exemptCoverArt,
+                   std::string_view clockText);
 void drawWaveform(Draw& draw, const Player& player, Rect area);

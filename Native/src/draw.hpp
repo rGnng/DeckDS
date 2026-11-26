@@ -29,7 +29,13 @@ struct Palette {
     Color bg, elevated, card, raised, border, strong, text, dim, muted, accent, soft,
           accentInk, danger, vuBase, vuGlow, wave;
 };
-const Palette& colors(Theme theme);
+struct AccentPreset {
+    std::string_view name;
+    std::string_view jaName;
+    Color swatch;
+};
+const Palette& colors(Theme theme, int accent = 0);
+std::array<AccentPreset, 4> accentPresets(Theme theme);
 
 class Draw {
 public:
@@ -40,12 +46,14 @@ public:
 
     SDL_Renderer* renderer;
     Theme theme = Theme::Obsidian;
-    const Palette& p() const { return colors(theme); }
+    int accentIndex = 0;
+    const Palette& p() const { return colors(theme, accentIndex); }
     bool vfd() const { return theme == Theme::Vfd; }
 
     void clear(Color c);
     void rect(Rect r, Color c);
     void round(Rect r, float radius, Color c);
+    void strokeRound(Rect r, float radius, Color c, float edge = 2);
     void frame(Rect r, float radius, Color fill, Color stroke, float edge = 2);
     void line(float x1, float y1, float x2, float y2, Color c, float width = 2);
     void circle(float x, float y, float radius, Color c);
@@ -64,17 +72,19 @@ public:
     void texture(SDL_Texture* texture, Rect target, float opacity = 1);
 
 private:
-    struct TextImage { SDL_Texture* texture; float w, h; };
+    struct TextImage { SDL_Texture* texture; float w, h; Uint64 lastUsed = 0; };
     std::filesystem::path fontPath;
     std::map<std::tuple<Theme, Face, Size, int>, TTF_Font*> fonts;
-    std::map<Size, TTF_Font*> fallbackFonts;
+    std::map<std::tuple<bool, Size>, TTF_Font*> fallbackFonts;
     std::map<std::tuple<Theme, Face, Size, int, std::string>, TextImage> labels;
     std::map<std::tuple<std::string, int>, SDL_Texture*> icons;
+    Uint64 labelTick = 0;
     void paint(Color c);
     TTF_Font* font(Face type, Size size, int weight);
     void artwork(const Track* track, Rect target);
     void roundedTexture(SDL_Texture* texture, Rect area, float corner);
-    std::map<std::tuple<std::string_view, std::array<std::string_view, 3>, Theme, int>, SDL_Texture*> artCache;
+    std::map<std::tuple<std::string_view, std::array<std::string_view, 3>, Theme, int, int>, SDL_Texture*> artCache;
     std::array<SDL_Texture*, 2> vuDials{};
+    SDL_Texture* phosphorMask = nullptr;
     SDL_Texture* iconTexture(std::string_view name, int pixels);
 };
