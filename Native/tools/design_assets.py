@@ -1,0 +1,155 @@
+"""Build native fixtures from the web reference without opening a browser."""
+import ast
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+def cpp(value):
+    return json.dumps(value, ensure_ascii=False)
+
+
+def js_array(source, name):
+    return source.split(f"const {name} = [", 1)[1].split("\n];", 1)[0]
+
+
+def reference_library(node, path):
+    # Execute only at build time; the running SDL app uses C++ data.
+    source = """
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const context = { window: {} };
+vm.runInNewContext(source, context, { filename: process.argv[1] });
+const engine = context.window.DECK_AUDIO;
+const normal = engine.generateLargeLibraryTracks(100);
+process.stdout.write(JSON.stringify({
+  defaultSize: normal.length,
+  tracks: engine.generateLargeLibraryTracks(2000).map(({waveform, ...track}) => track),
+}));
+"""
+    return json.loads(subprocess.check_output([node, "-e", source, str(path)], text=True))
+
+
+def keyboard_rows(node, path):
+    source = r"""
+const fs = require('node:fs');
+const vm = require('node:vm');
+const app = fs.readFileSync(process.argv[1], 'utf8');
+const start = app.indexOf('const OSK_ROWS = {');
+const end = app.indexOf('function getOskRowKeys(', start);
+if (start < 0 || end < 0) throw new Error('Missing OSK_ROWS in the reference');
+process.stdout.write(JSON.stringify(vm.runInNewContext(app.slice(start, end) + '\nOSK_ROWS')));
+"""
+    layouts = json.loads(subprocess.check_output([node, "-e", source, str(path)], text=True))
+    rows = []
+    for mode, keyboard in layouts.items():
+        for row, keys in enumerate(keyboard):
+            column = 0
+            for key in keys:
+                cells = [cpp(mode == "num"), str(row), str(column), str(key["span"]),
+                         cpp(key["label"]), cpp(key.get("val", "")), cpp(key.get("act", "")),
+                         cpp(key.get("fn", False)), cpp(key.get("done", False))]
+                rows.append("{" + ", ".join(cells) + "}")
+                column += key["span"]
+            if column != 10:
+                raise ValueError(f"Unexpected keypad row width in reference {mode}")
+    return rows
+
+def track_rows(tracks, source):
+    seeds = re.findall(r"waveform: generateWaveform\(([\d.]+)\)", js_array(source, "DEMO_TRACKS"))
+    if not tracks or len(seeds) > len(tracks):
+        raise ValueError("Malformed reference library")
+    rows = []
+    for index, track in enumerate(tracks):
+        strings = [track[name] for name in
+                   ("id", "title", "artist", "album", "format", "sampleRate", "bitrate", "addedAt", "artStyle")]
+        numbers = [track.get("discNo", 1), *(track[name] for name in ("trackNo", "year", "duration"))]
+        colors = "{" + ", ".join(map(cpp, track["colors"])) + "}"
+        seed = seeds[index] if index < len(seeds) else "3.5"
+        rows.append("{" + ", ".join([
+            *map(cpp, strings), *map(str, numbers), colors, seed + "f", str(track["synth"]["bpm"]),
+            str(track["synth"]["root"]), cpp(track["starred"]),
+        ]) + "}")
+    return rows
+
+
+def sound_rows(source):
+    cues = source.split("playSfx(type = 'tick')", 1)[1]
+    matches = list(re.finditer(r"if \(type === '([^']+)'\) \{", cues))
+    rows = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(cues)
+        pattern = r"tone\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+), '(sine|triangle)', ([\d.]+)\);"
+        for start, stop, duration, gain, shape, delay in re.findall(pattern, cues[match.end():end]):
+            rows.append("{" + ", ".join([
+                cpp(match[1]), start, stop, duration, gain, delay, cpp(shape == "triangle"),
+            ]) + "}")
+    if not rows:
+        raise ValueError("Missing UI sounds in the browser reference")
+    return rows
+
+
+def playlist_rows(source):
+    pattern = r"name: ('(?:[^'\\]|\\.)*'), trackIds: (\[[^\]]*\])"
+    return ["{" + cpp(ast.literal_eval(name)) + ", {" +
+            ", ".join(map(cpp, ast.literal_eval(ids))) + "}}"
+            for name, ids in re.findall(pattern, js_array(source, "INITIAL_PLAYLISTS"))]
+
+
+def svg_icons(html):
+    pattern = r'<symbol id="ic-([^"]+)" viewBox="([^"]+)">(.*?)</symbol>'
+    return ["{" + cpp(name) + ', R"decksvg(' +
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{box}" fill="none">' +
+            nodes.replace("currentColor", "#ffffff") + '</svg>)decksvg"}'
+            for name, box, nodes in re.findall(pattern, html, re.S)]
+
+
+def vfd_icons(source):
+    icons = {}
+    for size in (8, 16, 24):
+        block = source.split(f"const BITMAPS_{size} = {{", 1)[1].split("\n  };", 1)[0]
+        for name, pixels in re.findall(r"'ic-([^']+)': \[(.*?)\]", block, re.S):
+            rows = re.findall(r"'([.#]+)'", pixels)
+            if len(rows) != size or any(len(row) != size for row in rows):
+                raise ValueError(f"Unexpected VFD bitmap size for {name}")
+            icons[size, name] = rows
+    for size in (16, 24):
+        if (size, "next") not in icons:
+            icons[size, "next"] = [row[::-1] for row in icons[size, "prev"]]
+
+    icons[32, "play"] = []
+    for y in range(32):
+        lit = min(22, max(2, int((12.5 - abs(y - 15.5)) * 1.75 + 0.5)))
+        icons[32, "play"].append("." * 7 + "#" * lit + "." * (25 - lit) if 4 <= y <= 27 else "." * 32)
+    icons[32, "pause"] = ["......######........######......" if 5 <= y <= 26 else "." * 32 for y in range(32)]
+    return [f"{{{cpp(name)}, {size}, {cpp(''.join(rows))}}}" for (size, name), rows in icons.items()]
+
+
+def array(type_name, name, rows):
+    storage = "const" if type_name == "PlaylistFixture" else "constexpr"
+    return f"inline {storage} {type_name} {name}[] = {{\n    " + ",\n    ".join(rows) + "\n};\n"
+
+
+def main():
+    design, output = map(Path, sys.argv[1:3])
+    js = design / "audio-engine.js"
+    source = js.read_text(encoding="utf-8")
+    library = reference_library(sys.argv[3], js)
+    output.write_text(
+        "// Generated from the DeckDS browser reference.\n" +
+        f"inline constexpr int defaultLibrarySize = {library['defaultSize']};\n" +
+        array("Track", "demoTracks", track_rows(library["tracks"], source)) +
+        array("SfxAsset", "sfxAssets", sound_rows(source)) +
+        array("KeyAsset", "keyAssets", keyboard_rows(sys.argv[3], design / "app.js")) +
+        array("PlaylistFixture", "demoPlaylists", playlist_rows(source)) +
+        array("IconAsset", "svgAssets", svg_icons((design / "index.html").read_text(encoding="utf-8"))) +
+        array("PixelAsset", "pixelAssets", vfd_icons((design / "vfd-icons.js").read_text(encoding="utf-8"))),
+        encoding="utf-8",
+    )
+
+
+if __name__ == "__main__":
+    main()
