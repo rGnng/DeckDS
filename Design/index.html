@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="obsidian" data-view="clamshell">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DECK DS — ANBERNIC RG DS Plus Dual 4.3" Music Player</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Reusable Crisp SVG Icon Sprite -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="ic-play" viewBox="0 0 24 24">
+      <path d="M6.5 4.8v14.4c0 .9.95 1.45 1.72.98l11.4-7.2a1.15 1.15 0 0 0 0-1.96l-11.4-7.2A1.14 1.14 0 0 0 6.5 4.8Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-pause" viewBox="0 0 24 24">
+      <rect x="5.5" y="4.5" width="4.8" height="15" rx="1.6" fill="currentColor"/>
+      <rect x="13.7" y="4.5" width="4.8" height="15" rx="1.6" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-stop" viewBox="0 0 24 24">
+      <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-prev" viewBox="0 0 24 24">
+      <rect x="4.5" y="5" width="2.8" height="14" rx="1.2" fill="currentColor"/>
+      <path d="M19.2 5.4v13.2c0 .85-.92 1.38-1.66.94L8.6 12.94a1.1 1.1 0 0 1 0-1.88l8.94-6.6c.74-.44 1.66.09 1.66.94Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-next" viewBox="0 0 24 24">
+      <rect x="16.7" y="5" width="2.8" height="14" rx="1.2" fill="currentColor"/>
+      <path d="M4.8 5.4v13.2c0 .85.92 1.38 1.66.94l8.94-6.6a1.1 1.1 0 0 0 0-1.88L6.46 4.46c-.74-.44-1.66.09-1.66.94Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-star" viewBox="0 0 24 24">
+      <path d="M12 3.2l2.62 5.31 5.86.85-4.24 4.13 1 5.83L12 16.56l-5.24 2.76 1-5.83-4.24-4.13 5.86-.85L12 3.2Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-star-filled" viewBox="0 0 24 24">
+      <path d="M12 2.8l2.76 5.6 6.18.9-4.47 4.35 1.06 6.15L12 16.9l-5.53 2.9 1.06-6.15L3.06 9.3l6.18-.9L12 2.8Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-nav-play" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="2.2"/>
+      <path d="M10 8.5v7l6-3.5-6-3.5Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-nav-queue" viewBox="0 0 24 24">
+      <path d="M4 6.5h16M4 12h16M4 17.5h9.5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>
+      <path d="M16.5 15l4.2 2.5-4.2 2.5V15Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-settings" viewBox="0 0 24 24">
+      <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="9" cy="7" r="2.3" fill="currentColor"/>
+      <circle cx="15.5" cy="12" r="2.3" fill="currentColor"/>
+      <circle cx="10.5" cy="17" r="2.3" fill="currentColor"/>
+    </symbol>
+    <!-- Bootstrap Icons: bi:shuffle, bi:repeat, bi:repeat-1 -->
+    <symbol id="ic-shuffle" viewBox="0 0 16 16">
+      <g fill="currentColor">
+        <path fill-rule="evenodd" d="M0 3.5A.5.5 0 0 1 .5 3H1c2.202 0 3.827 1.24 4.874 2.418c.49.552.865 1.102 1.126 1.532c.26-.43.636-.98 1.126-1.532C9.173 4.24 10.798 3 13 3v1c-1.798 0-3.173 1.01-4.126 2.082A9.6 9.6 0 0 0 7.556 8a9.6 9.6 0 0 0 1.317 1.918C9.828 10.99 11.204 12 13 12v1c-2.202 0-3.827-1.24-4.874-2.418A10.6 10.6 0 0 1 7 9.05c-.26.43-.636.98-1.126 1.532C4.827 11.76 3.202 13 1 13H.5a.5.5 0 0 1 0-1H1c1.798 0 3.173-1.01 4.126-2.082A9.6 9.6 0 0 0 6.444 8a9.6 9.6 0 0 0-1.317-1.918C4.172 5.01 2.796 4 1 4H.5a.5.5 0 0 1-.5-.5"/>
+        <path d="M13 5.466V1.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384l-2.36 1.966a.25.25 0 0 1-.41-.192m0 9v-3.932a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384l-2.36 1.966a.25.25 0 0 1-.41-.192"/>
+      </g>
+    </symbol>
+    <symbol id="ic-repeat" viewBox="0 0 16 16">
+      <path fill="currentColor" d="M11 5.466V4H5a4 4 0 0 0-3.584 5.777a.5.5 0 1 1-.896.446A5 5 0 0 1 5 3h6V1.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384l-2.36 1.966a.25.25 0 0 1-.41-.192m3.81.086a.5.5 0 0 1 .67.225A5 5 0 0 1 11 13H5v1.466a.25.25 0 0 1-.41.192l-2.36-1.966a.25.25 0 0 1 0-.384l2.36-1.966a.25.25 0 0 1 .41.192V12h6a4 4 0 0 0 3.585-5.777a.5.5 0 0 1 .225-.67Z"/>
+    </symbol>
+    <symbol id="ic-repeat-one" viewBox="0 0 16 16">
+      <g fill="currentColor">
+        <path d="M11 4v1.466a.25.25 0 0 0 .41.192l2.36-1.966a.25.25 0 0 0 0-.384l-2.36-1.966a.25.25 0 0 0-.41.192V3H5a5 5 0 0 0-4.48 7.223a.5.5 0 0 0 .896-.446A4 4 0 0 1 5 4zm4.48 1.777a.5.5 0 0 0-.896.446A4 4 0 0 1 11 12H5.001v-1.466a.25.25 0 0 0-.41-.192l-2.36 1.966a.25.25 0 0 0 0 .384l2.36 1.966a.25.25 0 0 0 .41-.192V13h6a5 5 0 0 0 4.48-7.223Z"/>
+        <path d="M9 5.5a.5.5 0 0 0-.854-.354l-1.75 1.75a.5.5 0 1 0 .708.708L8 6.707V10.5a.5.5 0 0 0 1 0z"/>
+      </g>
+    </symbol>
+    <symbol id="ic-album" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.2"/>
+      <circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="2.2"/>
+    </symbol>
+    <symbol id="ic-goto-album" viewBox="0 0 24 24">
+      <path d="M11.6 18.4A8 8 0 1 1 18.4 11.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+      <circle cx="10.5" cy="10.5" r="2.5" fill="none" stroke="currentColor" stroke-width="2.1"/>
+      <path d="M14.2 14.2l2.3 7.1 1.6-3.2 3.2-1.6-7.1-2.3Z" fill="currentColor" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-artist" viewBox="0 0 24 24">
+      <circle cx="12" cy="8.2" r="4" fill="none" stroke="currentColor" stroke-width="2.2"/>
+      <path d="M4.8 19.6c.7-3.6 3.5-5.6 7.2-5.6s6.5 2 7.2 5.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ic-tracks" viewBox="0 0 24 24">
+      <path d="M9 17.5a2.5 2.5 0 1 1-2.5-2.5A2.5 2.5 0 0 1 9 17.5Zm10-2a2.5 2.5 0 1 1-2.5-2.5 2.5 2.5 0 0 1 2.5 2.5Z" fill="currentColor"/>
+      <path d="M9 17.5V6.2l10-2v11.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-playlists" viewBox="0 0 24 24">
+      <path d="M4 6.5h12M4 11.5h12M4 16.5h7.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="17.5" cy="16.5" r="2.3" fill="currentColor"/>
+      <path d="M19.8 16.5V9.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    </symbol>
+    <!-- Iconify Stage Icons: lucide:disc-album (CD Case), carbon:meter (VU Meter), foundation:graph-bar (Spectrum) -->
+    <symbol id="ic-stage-cover" viewBox="0 0 24 24">
+      <rect width="18" height="18" x="3" y="3" rx="2" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2.1"/>
+      <circle cx="12" cy="12" r="1.2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-stage-vu" viewBox="0 0 32 32">
+      <path fill="currentColor" d="M26 16a9.9 9.9 0 0 0-1.14-4.618l-1.495 1.496A7.95 7.95 0 0 1 24 16Zm-2.586-6L22 8.586L17.285 13.3A3 3 0 0 0 16 13a3 3 0 1 0 3 3a3 3 0 0 0-.3-1.285ZM16 17a1 1 0 1 1 1-1a1 1 0 0 1-1 1m0-9a8 8 0 0 1 3.122.635l1.496-1.496A9.986 9.986 0 0 0 6 16h2a8.01 8.01 0 0 1 8-8"/>
+      <path fill="currentColor" d="M16 30a14 14 0 1 1 14-14a14.016 14.016 0 0 1-14 14m0-26a12 12 0 1 0 12 12A12.014 12.014 0 0 0 16 4"/>
+    </symbol>
+    <symbol id="ic-stage-spectrum" viewBox="0 0 100 100">
+      <path fill="currentColor" d="M46.05 60.163H31.923c-.836 0-1.513.677-1.513 1.513V83.61c0 .836.677 1.513 1.513 1.513H46.05c.836 0 1.512-.677 1.512-1.513V61.675c0-.836-.677-1.512-1.512-1.512m22.027-45.285H53.95c-.836 0-1.513.677-1.513 1.513v67.218c0 .836.677 1.513 1.513 1.513h14.127c.836 0 1.513-.677 1.513-1.513V16.391c0-.836-.677-1.513-1.513-1.513m22.14 20.421H76.09c-.836 0-1.513.677-1.513 1.513v46.797c0 .836.677 1.513 1.513 1.513h14.126c.836 0 1.513-.677 1.513-1.513V36.812c0-.835-.677-1.513-1.512-1.513m-66.307 0H9.783c-.836 0-1.513.677-1.513 1.513v46.797c0 .836.677 1.513 1.513 1.513H23.91c.836 0 1.513-.677 1.513-1.513V36.812c0-.835-.677-1.513-1.513-1.513"/>
+    </symbol>
+    <symbol id="ic-playlist-add" viewBox="0 0 24 24">
+      <path d="M3.5 7h12M3.5 12h12M3.5 17h7.5M17.5 14v6M14.5 17h6" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ic-queue-add" viewBox="0 0 24 24">
+      <path d="M4 6.5h15M4 11.5h10M4 16.5h8M17.5 13v7M14 16.5h7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    </symbol>
+    <!-- Play Next icon: crisp bar on top of upward arrow -->
+    <symbol id="ic-play-next" viewBox="0 0 24 24">
+      <path d="M5 5.5h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M12 19.5V9.8m0 0-4.5 4.5M12 9.8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-more" viewBox="0 0 24 24">
+      <circle cx="6" cy="12" r="2" fill="currentColor"/>
+      <circle cx="12" cy="12" r="2" fill="currentColor"/>
+      <circle cx="18" cy="12" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-back" viewBox="0 0 24 24">
+      <path d="M15 5.5L8.5 12l6.5 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-trash" viewBox="0 0 24 24">
+      <path d="M4.5 7h15M9.5 7V4.8h5V7M7.5 7l.8 12.2h7.4L16.5 7" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-sort" viewBox="0 0 24 24">
+      <path d="M4 7h11M4 12h8M4 17h5M17.5 6v12m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-headphones" viewBox="0 0 24 24">
+      <path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      <rect x="3.5" y="13.5" width="4" height="6.5" rx="1.6" fill="currentColor"/>
+      <rect x="16.5" y="13.5" width="4" height="6.5" rx="1.6" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-speaker" viewBox="0 0 24 24">
+      <path d="M4.5 9.5h3.8l5-4v13l-5-4H4.5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1Z" fill="currentColor"/>
+      <path d="M16.5 9a4.2 4.2 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ic-speaker-mute" viewBox="0 0 24 24">
+      <path d="M4.5 9.5h3.8l5-4v13l-5-4H4.5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1Z" fill="currentColor"/>
+      <path d="M16.2 9.2l5 5.6M21.2 9.2l-5 5.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ic-bluetooth" viewBox="0 0 24 24">
+      <path d="M7.5 7.5l9 9-4.5 4V3.5l4.5 4-9 9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-info" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="2.2"/>
+      <path d="M12 11v5.5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>
+      <circle cx="12" cy="7.5" r="1.4" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-view-grid" viewBox="0 0 24 24">
+      <rect x="4" y="4" width="6.8" height="6.8" rx="1.6" fill="none" stroke="currentColor" stroke-width="2.1"/>
+      <rect x="13.2" y="4" width="6.8" height="6.8" rx="1.6" fill="none" stroke="currentColor" stroke-width="2.1"/>
+      <rect x="4" y="13.2" width="6.8" height="6.8" rx="1.6" fill="none" stroke="currentColor" stroke-width="2.1"/>
+      <rect x="13.2" y="13.2" width="6.8" height="6.8" rx="1.6" fill="none" stroke="currentColor" stroke-width="2.1"/>
+    </symbol>
+    <symbol id="ic-view-list" viewBox="0 0 24 24">
+      <rect x="4" y="5" width="3.5" height="3.5" rx="0.9" fill="currentColor"/>
+      <path d="M10.2 6.75h9.8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      <rect x="4" y="10.25" width="3.5" height="3.5" rx="0.9" fill="currentColor"/>
+      <path d="M10.2 12h9.8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      <rect x="4" y="15.5" width="3.5" height="3.5" rx="0.9" fill="currentColor"/>
+      <path d="M10.2 17.25h9.8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    </symbol>
+  </svg>
+
+  <!-- Studio Presentation Header -->
+  <header class="studio-bar">
+    <div class="studio-brand">
+      <span class="studio-led"></span>
+      <strong>DECK DS</strong>
+      <span class="studio-spec">RG DS PLUS / 2 × 4.3" (87.4 × 65.5 mm / 1024 × 768)</span>
+    </div>
+
+    <div class="studio-controls">
+      <div class="pill-group" role="group" aria-label="View Mode">
+        <button class="pill-btn active" data-set-view="clamshell">RG DS Shell</button>
+        <button class="pill-btn" data-set-view="screens">2× 1024×768</button>
+        <button class="pill-btn" data-set-view="physical" title="Calibrated 1:1 physical 4.3 inch size for Apple Studio Display 27&quot; 5K (109 CSS PPI → 375×281 CSS px)">True 4.3" (5K)</button>
+      </div>
+
+      <div class="pill-group" role="group" aria-label="Theme">
+        <button class="pill-btn active" data-set-theme="obsidian">Obsidian</button>
+        <button class="pill-btn" data-set-theme="ceramic">Ceramic</button>
+        <button class="pill-btn" data-set-theme="vfd">VFD</button>
+      </div>
+
+      <button class="action-pill" id="btnIntegerScale" title="Lock preview to exact physical pixel integer scale (zero sub-pixel resampling blur)">Integer Scale</button>
+      <button class="action-pill" id="btnToggle2k" title="Switch between 100 Albums default and 2,000 Albums stress test">2,000 Albums Sim</button>
+      <button class="action-pill" id="btnLidToggle" title="Simulate Hall Switch Lid Close (L)">⌸ Close Lid</button>
+      <label class="action-pill upload-pill" title="Load local FLAC/MP3/WAV files">
+        ＋ Audio
+        <input type="file" id="audioFileInput" accept="audio/*" multiple hidden />
+      </label>
+      <button class="action-pill" id="btnHelpToggle" title="Keyboard & Control Map">? Keys</button>
+    </div>
+  </header>
+
+  <!-- Main Stage Container -->
+  <main class="workspace-stage" id="workspaceStage">
+    <div class="physical-ruler-note" id="physicalRulerNote">
+      APPLE STUDIO DISPLAY 27" 5K (109 CSS PPI) — EACH 4.3" SCREEN = 375 × 281 CSS px (EXACT 87.4 × 65.5 mm)
+    </div>
+
+    <div class="device-scaler" id="deviceScaler">
+      <!-- ANBERNIC RG DS PLUS HARDWARE SHELL -->
+      <div class="rgds-device" id="rgdsDevice">
+
+        <!-- TOP CLAMSHELL HALF -->
+        <section class="rgds-top-lid">
+          <div class="lid-speaker left" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+
+          <div class="screen-housing top-housing">
+            <div class="screen-badge">TOP 4.3" / 1024×768 / NON-TOUCH DISPLAY</div>
+            <div class="ds-screen non-touch-screen" id="slotTop" data-slot="top"></div>
+          </div>
+
+          <div class="lid-speaker right" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </section>
+
+        <!-- DUAL-ALLOY STEPLESS HINGE -->
+        <div class="rgds-hinge">
+          <div class="hinge-barrel left"></div>
+          <div class="hinge-center">
+            <span class="hinge-brand">ANBERNIC RG DS PLUS</span>
+            <div class="hinge-leds">
+              <span class="led-dot power" title="Power On"></span>
+              <span class="led-dot audio" id="hingeAudioLed" title="Audio Active"></span>
+              <span class="led-dot bt" id="hingeOutputLed" title="Output Status"></span>
+            </div>
+            <div class="shoulder-triggers">
+              <button class="hw-shoulder" data-hw="L2" title="L2: Previous Track (1)">L2</button>
+              <button class="hw-shoulder" data-hw="L1" title="L1: Previous Tab — Stops at Deck (Q)">L1</button>
+              <button class="hw-shoulder" data-hw="R1" title="R1: Next Tab — Stops at Queue (E)">R1</button>
+              <button class="hw-shoulder" data-hw="R2" title="R2: Next Track (2)">R2</button>
+            </div>
+          </div>
+          <div class="hinge-barrel right"></div>
+        </div>
+
+        <!-- BOTTOM CLAMSHELL DECK (FAITHFUL RG DS PLUS BUTTON LAYOUT) -->
+        <section class="rgds-bottom-deck">
+          <!-- LEFT WING: D-PAD + SINGLE ANALOG STICK + TWO BOTTOM-LEFT AUX BUTTONS -->
+          <div class="controls-wing left-wing">
+            <div class="dpad" aria-label="D-Pad">
+              <button class="dpad-btn up" data-hw="UP" title="D-Pad Up">▲</button>
+              <button class="dpad-btn left" data-hw="LEFT" title="D-Pad Left">◀</button>
+              <div class="dpad-center"></div>
+              <button class="dpad-btn right" data-hw="RIGHT" title="D-Pad Right">▶</button>
+              <button class="dpad-btn down" data-hw="DOWN" title="D-Pad Down">▼</button>
+            </div>
+
+            <div class="analog-stick-well" id="analogStickWell" title="Single Analog Stick (Drag to Scrub)">
+              <div class="analog-stick-cap" id="analogStickCap"></div>
+            </div>
+
+            <div class="aux-btn-pair" aria-label="Left Bottom Function Buttons">
+              <button class="hw-aux-btn" data-hw="AUX1" id="hwBtnAux1" title="Left Aux 1 (D): Star / Unstar Current Track">
+                <span class="aux-glyph" id="hwAuxStarGlyph">☆</span>
+                <span class="aux-lbl">STAR</span>
+              </button>
+              <button class="hw-aux-btn" data-hw="AUX2" id="hwBtnAux2" title="Left Aux 2 (H): Smart Jump (Deck ↔ Current Album)">
+                <span class="aux-glyph">♫</span>
+                <span class="aux-lbl">NOW</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- CENTER LOWER TOUCH/STYLUS SCREEN -->
+          <div class="screen-housing bottom-housing">
+            <div class="screen-badge">BOTTOM 4.3" / 1024×768 / TOUCH + KEYPAD</div>
+            <div class="ds-screen" id="slotBottom" data-slot="bottom"></div>
+          </div>
+
+          <!-- RIGHT WING: ABXY + START & SELECT BOTH ON RIGHT + STYLUS -->
+          <div class="controls-wing right-wing">
+            <div class="abxy-cluster" aria-label="ABXY Face Buttons">
+              <button class="face-btn btn-x" data-hw="X" title="X: Cycle Top Stage (C)">X</button>
+              <button class="face-btn btn-y" data-hw="Y" title="Y: Open Context Menu (V)">Y</button>
+              <button class="face-btn btn-a" data-hw="A" title="A: Confirm / Activate Focused Control (Z / Enter)">A</button>
+              <button class="face-btn btn-b" data-hw="B" title="B: Back / Close Sheet (X / Backspace)">B</button>
+            </div>
+
+            <div class="start-select-stack">
+              <button class="hw-pill-btn start-btn" data-hw="START" title="Start: Global Play / Pause (Space)">START</button>
+              <button class="hw-pill-btn" data-hw="SELECT" title="Select: Sort Order / Settings (Tab)">SELECT</button>
+            </div>
+
+            <div class="stylus-slot" title="Flush Capacitive Stylus">
+              <span class="stylus-tip"></span>
+              <span class="stylus-label">STYLUS</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- CLOSED LID OVERLAY -->
+        <div class="pocket-lid-overlay" id="pocketLidOverlay" aria-hidden="true">
+          <div class="pocket-shell-card">
+            <div class="pocket-top-strip">
+              <span class="pocket-hall-badge">HALL SENSOR / DISPLAYS OFF</span>
+              <span class="pocket-battery">4000mAh / ~22h AUDIO</span>
+            </div>
+            <div class="pocket-emblem">
+              <div class="pocket-ring"></div>
+              <div class="pocket-brand">ANBERNIC</div>
+              <div class="pocket-sub">RG DS PLUS — POCKET DAP MODE</div>
+            </div>
+            <div class="pocket-now-playing">
+              <div class="pocket-track" id="pocketTrackTitle">—</div>
+              <div class="pocket-meta" id="pocketTrackMeta">—</div>
+              <div class="pocket-controls">
+                <button class="pocket-hw-btn" data-hw="L2">L2 PREV</button>
+                <button class="pocket-hw-btn primary" data-hw="START" id="pocketPlayBtn">▶ PLAY</button>
+                <button class="pocket-hw-btn" data-hw="R2">R2 NEXT</button>
+              </div>
+            </div>
+            <button class="pocket-open-btn" id="btnOpenLid">OPEN CLAMSHELL (L)</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <!-- Toast Feedback -->
+  <div class="haptic-toast" id="hapticToast" aria-live="polite"></div>
+
+  <!-- Keyboard / Hardware Legend Modal -->
+  <div class="help-modal" id="helpModal" hidden>
+    <div class="help-card">
+      <div class="help-header">
+        <h2>RG DS Plus Keypad &amp; Keyboard Map (100% Keypad Operable)</h2>
+        <button class="help-close" id="btnHelpClose">✕</button>
+      </div>
+      <div class="help-grid">
+        <div><kbd>↑ ↓ ← →</kbd> / <strong>D-Pad</strong></div><div>Move focus cursor everywhere (Play controls, Grids, Lists, Settings, Sheets)</div>
+        <div><kbd>Z</kbd> / <kbd>Enter</kbd> / <strong>A</strong></div><div>Activate focused button / Play song / Open album</div>
+        <div><kbd>X</kbd> / <kbd>Backspace</kbd> / <strong>B</strong></div><div>Back from Detail / Settings / Close Sheet</div>
+        <div><kbd>V</kbd> / <strong>Y</strong></div><div>Evoke Context Menu (⋯) for focused or playing track</div>
+        <div><kbd>C</kbd> / <strong>X</strong></div><div>Cycle Top Screen Stage (Cover → VU → Spectrum)</div>
+        <div><kbd>Q</kbd> / <kbd>E</kbd> / <strong>L1 / R1</strong></div><div>Switch Top Tab (Bounded: stops at Deck ← → Queue)</div>
+        <div><kbd>1</kbd> / <kbd>2</kbd> / <strong>L2 / R2</strong></div><div>Previous / Next Track globally</div>
+        <div><kbd>Space</kbd> / <strong>START</strong></div><div>Global Play / Pause</div>
+        <div><kbd>Tab</kbd> / <strong>SELECT</strong></div><div>Sort Order (Albums / Artists / Songs), New Playlist, or Settings (on Deck)</div>
+        <div><kbd>D</kbd> / <strong>Left Aux 1 (STAR)</strong></div><div>Star / Unstar Current Track globally</div>
+        <div><kbd>H</kbd> / <strong>Left Aux 2 (NOW)</strong></div><div>Smart Jump (Deck ↔ Current Track's Album)</div>
+        <div><kbd>L</kbd> / <strong>Lid</strong></div><div>Simulate Hall Sensor Pocket Audio Mode</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================
+       TOP SCREEN TEMPLATE (1024×768 — NON-TOUCH STAGE)
+       ====================================================================== -->
+  <template id="tplStageScreen">
+    <div class="ui-root stage-ui">
+      <header class="top-status-bar">
+        <div class="status-left">
+          <span class="status-play-state" id="topPlayState" aria-label="Paused">
+            <svg class="ic-24"><use id="topPlaySvgUse" href="#ic-pause"/></svg>
+          </span>
+          <span class="status-queue-pos" id="topQueuePos">01 / 12</span>
+          <span class="codec-pill" id="topCodecBadge">FLAC 96kHz</span>
+        </div>
+        <div class="status-right">
+          <span class="status-star" id="topStarIcon" aria-label="Starred" hidden>
+            <svg class="ic-24"><use href="#ic-star-filled"/></svg>
+          </span>
+          <span class="status-bat" aria-label="Battery"><span class="bat-icon"><i></i></span></span>
+          <span class="status-clock" id="topClock">21:26</span>
+        </div>
+      </header>
+
+      <div class="stage-viewport" data-active-stage="cover">
+        <!-- MODE 1: GALLERY COVER SHOWCASE (UNOBSTRUCTED ARTWORK) -->
+        <section class="stage-panel active" data-stage="cover">
+          <div class="cover-ambient-glow" id="coverAmbientGlow"></div>
+          <div class="cover-layout">
+            <div class="cover-hero-row">
+              <div class="album-frame">
+                <canvas id="albumArtCanvas" width="560" height="560"></canvas>
+              </div>
+
+              <div class="cover-meta-stack">
+                <h1 class="cover-title" id="coverTitle">Nocturne in 4:3</h1>
+                <div class="cover-artist" id="coverArtist">Kōji Takahashi</div>
+                <div class="cover-album" id="coverAlbum">Glass Hinge Sessions</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- MODE 2: GIANT BACKLIT ANALOG VU -->
+        <section class="stage-panel" data-stage="vu">
+          <div class="vu-layout">
+            <canvas id="vuMeterCanvas" width="976" height="540"></canvas>
+          </div>
+        </section>
+
+        <!-- MODE 3: 28-BAND BOLD SPECTRUM + OSCILLOSCOPE -->
+        <section class="stage-panel" data-stage="spectrum">
+          <div class="spectrum-layout">
+            <canvas id="spectrumCanvas" width="1024" height="704"></canvas>
+          </div>
+        </section>
+
+        <!-- UNIFIED FRAMELESS PROGRESS & TITLE DOCK (PIXEL-LOCKED ACROSS ALL 3 STAGES) -->
+        <div class="stage-now-dock">
+          <div class="stage-now-title" id="stageNowTitle">Nocturne in 4:3</div>
+          <div class="cover-progress-block">
+            <span class="cover-time" id="stageTimeCur">00:00</span>
+            <div class="cover-progress-track">
+              <div class="cover-progress-fill" id="stageProgressFill"></div>
+            </div>
+            <span class="cover-time" id="stageTimeTot">03:36</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ======================================================================
+       BOTTOM SCREEN TEMPLATE (1024×768 — OPTION 1 BOUNDED BAR + FULL KEYPAD)
+       ====================================================================== -->
+  <template id="tplConsoleScreen">
+    <div class="ui-root console-ui">
+      <!-- 76px Bounded 6-Tab Expanding Nav Bar (Left = DECK, Right = QUEUE; Settings lives on DECK!) -->
+      <nav class="deck-nav-bar" aria-label="Primary Tabs">
+        <button class="nav-shoulder-hint" id="navBtnL1" data-hw="L1">L1</button>
+        <div class="deck-tabs">
+          <button class="deck-tab active" data-deck="play" title="Deck">
+            <svg class="nav-ic"><use href="#ic-nav-play"/></svg>
+            <span class="deck-tab-label">DECK</span>
+          </button>
+          <button class="deck-tab" data-deck="albums" title="Albums">
+            <svg class="nav-ic"><use href="#ic-album"/></svg>
+            <span class="deck-tab-label">ALBUMS</span>
+          </button>
+          <button class="deck-tab" data-deck="artists" title="Artists">
+            <svg class="nav-ic"><use href="#ic-artist"/></svg>
+            <span class="deck-tab-label">ARTISTS</span>
+          </button>
+          <button class="deck-tab" data-deck="playlists" title="Playlists">
+            <svg class="nav-ic"><use href="#ic-playlists"/></svg>
+            <span class="deck-tab-label">PLAYLISTS</span>
+          </button>
+          <button class="deck-tab" data-deck="tracks" title="Songs">
+            <svg class="nav-ic"><use href="#ic-tracks"/></svg>
+            <span class="deck-tab-label">SONGS</span>
+          </button>
+          <button class="deck-tab" data-deck="queue" title="Up Next Queue">
+            <svg class="nav-ic"><use href="#ic-nav-queue"/></svg>
+            <span class="deck-tab-label">QUEUE</span>
+          </button>
+        </div>
+        <button class="nav-shoulder-hint" id="navBtnR1" data-hw="R1">R1</button>
+      </nav>
+
+      <!-- Active Viewport -->
+      <div class="deck-viewport">
+
+        <!-- TAB 01: PLAY (FULL 692px HEIGHT, INLINE KEYCAP BADGES, FOLDED OUTPUT MENU) -->
+        <section class="deck-panel active" data-deck="play">
+          <div class="module-card waveform-module" id="playRowWaveform">
+            <div class="waveform-header">
+              <span class="wf-title" id="wfTrackTitle">Nocturne in 4:3</span>
+              <div class="wf-header-right">
+                <div class="wf-timecodes">
+                  <span class="time-current" id="timeCurrent">00:00</span>
+                  <span class="time-slash">/</span>
+                  <span class="time-total" id="timeTotal">03:36</span>
+                </div>
+                <button class="wf-icon-btn has-keycap" id="btnNowContext" data-pf="0,0" title="Track Context Menu (Y)" aria-label="Track Context Menu">
+                  <svg class="ic-28"><use href="#ic-more"/></svg>
+                  <span class="btn-keycap">Y</span>
+                </button>
+                <button class="wf-icon-btn has-keycap" id="btnOpenSettings" data-pf="0,1" title="Settings (SELECT)" aria-label="Settings">
+                  <svg class="ic-28"><use href="#ic-settings"/></svg>
+                  <span class="btn-keycap">SEL</span>
+                </button>
+              </div>
+            </div>
+            <div class="waveform-canvas-wrap" id="waveformWrap" data-pf="1,0">
+              <canvas id="waveformCanvas" width="940" height="148"></canvas>
+            </div>
+          </div>
+
+          <!-- Icon-Only Hero Transport Keys -->
+          <div class="transport-row">
+            <button class="tactile-btn" id="btnPrev" data-pf="2,0" title="Previous Track" aria-label="Previous">
+              <svg class="transport-ic"><use href="#ic-prev"/></svg>
+            </button>
+            <button class="tactile-btn hero-play" id="btnPlayPause" data-pf="2,1" title="Play / Pause" aria-label="Play or Pause">
+              <svg class="transport-ic hero-ic"><use id="playPauseSvgUse" href="#ic-play"/></svg>
+            </button>
+            <button class="tactile-btn" id="btnNext" data-pf="2,2" title="Next Track" aria-label="Next">
+              <svg class="transport-ic"><use href="#ic-next"/></svg>
+            </button>
+            <button class="tactile-btn star-btn" id="btnStar" data-pf="2,3" title="Star / Unstar" aria-label="Star">
+              <svg class="transport-ic"><use id="starSvgUse" href="#ic-star"/></svg>
+            </button>
+          </div>
+
+          <!-- Single-Line Volume Bar: Mute Button | Slider (+ Adjust Pop-Up) | Output Device Select -->
+          <div class="module-card vol-card" id="volCard">
+            <button class="vol-mute-btn" id="btnMuteToggle" title="Mute / Unmute" aria-label="Mute or Unmute">
+              <svg class="ic-28"><use id="muteBtnIcon" href="#ic-speaker"/></svg>
+            </button>
+            <div class="vol-slider-wrap">
+              <input type="range" id="volumeSlider" min="0" max="100" value="76" class="studio-slider vol-inline-slider" aria-label="Volume" />
+              <div class="vol-popup" id="volPopup" aria-live="polite">76</div>
+            </div>
+            <button class="output-menu-btn" id="btnOpenOutputSheet" title="Select Audio Output Device" aria-label="Select Audio Output Device">
+              <svg class="ic-28"><use id="outputBtnIcon" href="#ic-headphones"/></svg>
+            </button>
+          </div>
+
+          <!-- 4 Quick Pads (X badge on Stage pad) -->
+          <div class="quick-pad-row">
+            <button class="quick-pad has-keycap" id="btnCycleStage" data-pf="4,0" title="Cycle Top Stage (X)" aria-label="Cycle Top Stage">
+              <svg class="pad-ic-lg"><use id="stageSvgUse" href="#ic-stage-cover"/></svg>
+              <span class="btn-keycap">X</span>
+            </button>
+            <button class="quick-pad icon-only-pad" id="btnShuffle" data-pf="4,1" title="Toggle Shuffle" aria-label="Shuffle">
+              <svg class="pad-ic-lg"><use href="#ic-shuffle"/></svg>
+            </button>
+            <button class="quick-pad icon-only-pad active" id="btnRepeat" data-pf="4,2" title="Cycle Repeat" aria-label="Repeat">
+              <svg class="pad-ic-lg"><use id="repeatSvgUse" href="#ic-repeat"/></svg>
+            </button>
+            <button class="quick-pad icon-only-pad" id="btnGoToCurrentAlbum" data-pf="4,3" title="Go to Current Album" aria-label="Go to Current Album">
+              <svg class="pad-ic-lg"><use href="#ic-goto-album"/></svg>
+            </button>
+          </div>
+        </section>
+
+        <!-- SHARED CATALOG BROWSER PANEL (DRIVES ALBUMS / ARTISTS / PLAYLISTS / SONGS + DETAIL DRILL-DOWN) -->
+        <section class="deck-panel" data-deck="catalog" id="catalogPanel">
+          <!-- -1 Pull/Press-Up Utility Bar (Count + Play/Shuffle + Album View Toggle + Order Button) -->
+          <div class="minus-one-bar" id="libCategoryBar">
+            <span class="cat-header-count" id="catHeaderCount">100</span>
+            <div class="cat-play-actions" id="catPlayActions" hidden>
+              <button class="cat-act-btn" id="btnCatShufflePlay" title="Shuffle Play" aria-label="Shuffle Play">
+                <svg class="ic-24"><use href="#ic-shuffle"/></svg>
+                <span>Shuffle</span>
+              </button>
+              <button class="cat-act-btn primary" id="btnCatPlayAll" title="Play" aria-label="Play">
+                <svg class="ic-24"><use href="#ic-play"/></svg>
+                <span>Play</span>
+              </button>
+            </div>
+            <div class="album-view-toggle" id="albumViewToggle" hidden role="group" aria-label="Albums View Mode">
+              <button class="view-mode-btn active" id="btnAlbumViewGrid" data-album-view="grid" title="Grid View" aria-label="Grid View">
+                <svg class="ic-24"><use href="#ic-view-grid"/></svg>
+              </button>
+              <button class="view-mode-btn" id="btnAlbumViewList" data-album-view="list" title="List View" aria-label="List View">
+                <svg class="ic-24"><use href="#ic-view-list"/></svg>
+              </button>
+            </div>
+            <div class="sort-controls" id="catSortControls">
+              <button class="sort-pill-btn" id="btnOpenSortSheet" title="Order By (SELECT)">
+                <svg class="ic-22"><use href="#ic-sort"/></svg>
+                <span id="sortFieldLabel">Added Time ↓</span>
+              </button>
+            </div>
+            <button class="detail-act-btn primary" id="btnCatNewPlaylist" hidden>＋ New Playlist</button>
+          </div>
+
+          <!-- Single-Row Detail Header (Album Detail / Artist Detail / Playlist Detail) -->
+          <div class="detail-header-bar" id="libDetailBar" hidden>
+            <button class="detail-back-btn" id="btnDetailBack" title="Back (B)" aria-label="Back">
+              <svg class="ic-28"><use href="#ic-back"/></svg>
+            </button>
+            <canvas id="detailArtCanvas" width="84" height="84" class="detail-art"></canvas>
+            <div class="detail-meta">
+              <div class="detail-title" id="detailTitle">Album Title</div>
+              <div class="detail-sub" id="detailSub">Artist (2026) — 3 tracks</div>
+            </div>
+            <div class="detail-actions">
+              <button class="detail-act-btn" id="btnDetailShufflePlay" title="Shuffle Play" aria-label="Shuffle Play">
+                <svg class="ic-28"><use href="#ic-shuffle"/></svg>
+                <span>Shuffle</span>
+              </button>
+              <button class="detail-act-btn primary" id="btnDetailPlayAll" title="Play" aria-label="Play">
+                <svg class="ic-28"><use href="#ic-play"/></svg>
+                <span>Play</span>
+              </button>
+              <button class="detail-act-btn" id="btnDetailQueueAll" title="Add to Queue" aria-label="Add to Queue">
+                <svg class="ic-28"><use href="#ic-queue-add"/></svg>
+                <span>Queue</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="lib-content-wrap" id="libContentWrap">
+            <div class="lib-items" id="libItems"></div>
+            <div class="smart-scrubber" id="smartScrubber" hidden title="Drag finger or stylus to jump">
+              <div class="scrubber-ticks" id="scrubberTicks"></div>
+              <div class="scrubber-thumb" id="scrubberThumb"></div>
+            </div>
+            <div class="scrubber-popup" id="scrubberPopup" hidden>
+              <div class="popup-hero" id="scrubberPopupHero">100</div>
+              <div class="popup-sub" id="scrubberPopupSub">Preview</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 06: QUEUE (FULL-HEIGHT UP NEXT — NO REDUNDANT HEADER/COUNT/RUNTIME) -->
+        <section class="deck-panel" data-deck="queue">
+          <div class="queue-scroll" id="queueList"></div>
+        </section>
+
+        <!-- SETTINGS VIEW (OPENED FROM PLAY DECK ⚙ BUTTON; B RETURNS TO PLAY) -->
+        <section class="deck-panel" data-deck="settings" id="settingsPanel">
+          <div class="category-header-bar">
+            <button class="detail-back-btn" id="btnSettingsBack" title="Back to Deck (B)" aria-label="Back">
+              <svg class="ic-28"><use href="#ic-back"/></svg>
+            </button>
+            <div class="cat-header-title">Deck Settings</div>
+            <span class="cat-header-count">RG DS+</span>
+          </div>
+
+          <!-- Notched Screen Brightness Slider -->
+          <div class="module-card brightness-card" data-sf="0">
+            <div class="brightness-head">
+              <label>SCREEN BRIGHTNESS</label>
+              <span class="mono-accent brightness-val" id="brightnessVal">100%</span>
+            </div>
+            <div class="notched-slider-wrap">
+              <input type="range" id="brightnessSlider" min="0" max="6" step="1" value="6" class="studio-slider notched-slider" />
+              <div class="slider-notches" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              </div>
+              <div class="slider-notch-labels">
+                <span>15%</span><span>30%</span><span>45%</span><span>60%</span><span>75%</span><span>90%</span><span>100%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-grid compact-settings-grid">
+            <div class="module-card setting-card span-2" data-sf="1">
+              <label>VISUAL THEME</label>
+              <div class="seg-control">
+                <button class="seg-btn active" data-set-theme="obsidian">Obsidian</button>
+                <button class="seg-btn" data-set-theme="ceramic">Ceramic</button>
+                <button class="seg-btn" data-set-theme="vfd">VFD</button>
+              </div>
+            </div>
+
+            <div class="module-card setting-card" data-sf="2">
+              <label>LID CLOSE (HALL)</label>
+              <div class="seg-control">
+                <button class="seg-btn active" data-lid-mode="pocket">Pocket Audio</button>
+                <button class="seg-btn" data-lid-mode="pause">Pause</button>
+              </div>
+            </div>
+
+            <div class="module-card setting-card" data-sf="3">
+              <label>UI SOUND FX</label>
+              <div class="seg-control">
+                <button class="seg-btn active" data-sfx="on">Nintendo SFX</button>
+                <button class="seg-btn" data-sfx="off">Mute</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- UNIVERSAL TRACK CONTEXT MENU (EVOKED BY ⋯ OR PHYSICAL Y KEY!) -->
+        <div class="sheet-overlay" id="trackActionSheet" hidden>
+          <div class="sheet-card">
+            <div class="sheet-head">
+              <div>
+                <div class="sheet-title" id="actionTrackTitle">Track Title</div>
+                <div class="sheet-sub" id="actionTrackSub">Artist — Album</div>
+              </div>
+              <button class="sheet-close" id="btnCloseActionSheet" aria-label="Close">✕</button>
+            </div>
+            <div class="sheet-btn-grid" id="actionSheetButtons"></div>
+          </div>
+        </div>
+
+        <!-- SORT ORDER SHEET (ORDER BY + CONTEXT-CLEAR DIRECTION) -->
+        <div class="sheet-overlay" id="sortOrderSheet" hidden>
+          <div class="sheet-card">
+            <div class="sheet-head">
+              <div>
+                <div class="sheet-title" id="sortSheetTitle">Order By</div>
+                <div class="sheet-sub" id="sortSheetSub">Added Time (Newest First)</div>
+              </div>
+              <button class="sheet-close" id="btnCloseSortSheet" aria-label="Close">✕</button>
+            </div>
+            <div class="sort-section-label">ORDER BY</div>
+            <div class="sheet-btn-grid" id="sortOptionsGrid"></div>
+            <div class="sort-section-label">DIRECTION</div>
+            <div class="sheet-btn-grid" id="sortDirGrid"></div>
+          </div>
+        </div>
+
+        <!-- GET INFO SHEET (RICH AUDIOPHILE TRACK METADATA) -->
+        <div class="sheet-overlay" id="trackInfoSheet" hidden>
+          <div class="sheet-card info-sheet-card">
+            <div class="sheet-head">
+              <div class="info-head-left">
+                <canvas id="infoArtCanvas" width="76" height="76" class="detail-art"></canvas>
+                <div class="info-head-meta">
+                  <div class="sheet-title" id="infoTrackTitle">Track Title</div>
+                  <div class="sheet-sub" id="infoTrackArtist">Artist</div>
+                </div>
+              </div>
+              <button class="sheet-close" id="btnCloseInfoSheet" aria-label="Close">✕</button>
+            </div>
+            <div class="info-scroll-body" id="infoScrollBody"></div>
+          </div>
+        </div>
+
+        <!-- AUDIO OUTPUT DEVICE SHEET (FOLDED FROM VOLUME SLIDER ROW) -->
+        <div class="sheet-overlay" id="outputDeviceSheet" hidden>
+          <div class="sheet-card">
+            <div class="sheet-head">
+              <div>
+                <div class="sheet-title">Audio Output</div>
+              </div>
+              <button class="sheet-close" id="btnCloseOutputSheet" aria-label="Close">✕</button>
+            </div>
+            <div class="picker-list" id="outputDeviceList"></div>
+          </div>
+        </div>
+
+        <!-- ADD TO PLAYLIST PICKER SHEET -->
+        <div class="sheet-overlay" id="playlistPickerSheet" hidden>
+          <div class="sheet-card">
+            <div class="sheet-head">
+              <div>
+                <div class="sheet-title">Add to Playlist</div>
+                <div class="sheet-sub" id="pickerTrackLabel">Track Title</div>
+              </div>
+              <button class="sheet-close" id="btnClosePickerSheet" aria-label="Close">✕</button>
+            </div>
+            <div class="picker-list" id="pickerPlaylistList"></div>
+            <div class="new-pl-row">
+              <input type="text" id="newPlaylistInput" class="new-pl-input" placeholder="New playlist name…" maxlength="28" />
+              <button class="detail-act-btn primary" id="btnCreateAndAddPl">Create</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </template>
+
+  <script src="vfd-icons.js"></script>
+  <script src="audio-engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
