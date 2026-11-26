@@ -67,3 +67,19 @@ Zero double headers and **zero bottom tooltip bar** (every screen gets the full 
    - **Album Detail & Rich `Get Info` Panel:** Album track rows stay clean and single-line (track number, title, duration, `⋯` — no redundant format/sample-rate clutter per row). Selecting **`Get Info`** from any track's Context Menu (`⋯` or `Y`) opens a scrollable, keypad-operable spec sheet displaying Album, Artist, Year, Disc/Track, Duration, Codec/Format, Sample Rate & Bit Depth, Bitrate, Channels, File Size, Added Date, ReplayGain, Signal Path, and MicroSD File Path.
 3. **`QUEUE`:** True iTunes-style **Up Next** list containing only upcoming tracks (as each track starts playing it is removed from Up Next; `Prev` restores from played history; when Up Next is empty, `Next` stops cleanly). Features a dedicated **Play Next** icon button (moves track to top of Up Next) and **`⋯` / `Y`** Context Menu tailored to Queue (**Play Next**, **Go to Album**, **Go to Artist**, **Star/Unstar**, **Add to Playlist**, **Remove from Queue**).
 4. **`Settings` (opened from `⚙` on `DECK`):** **7-Notch Screen Brightness Slider** (`15% → 100%`, live IPS dimming + detent chimes), **Visual Theme** (full-width), **Lid Close Hall Sensor**, and **Nintendo UI Sound FX**.
+
+---
+
+## 5. Native Appliance Runtime, GitHub OTA & LAN Debug / Web Control
+
+- **Pure Native Dedicated DAP (Zero Web Engine on Device):**
+  - Compiled `aarch64` native Linux binary on **64-bit Linux** (ROCKNIX kiosk mode initially, migrating to a minimal read-only Buildroot appliance image).
+  - **Power on → straight into DECK DS**, supervised with auto-restart (`never exits` to an OS shell). Read-only OS rootfs + writable `/data` config/SQLite DB + `/mnt/sd2/Music` library.
+  - Pre-fader audio metering (VU + Spectrum tied directly to source PCM before ALSA volume/mute), hardware `SW_LID` Pocket Audio mode, `KEY_POWER` graceful shutdown, and USB Mass Storage / BlueZ pairing inside Settings.
+- **GitHub OTA Updates (`rGnng/DeckDS`):**
+  - Checks GitHub Releases API (`https://api.github.com/repos/rGnng/DeckDS/releases/latest`) over Wi-Fi on demand (or periodic check) from Settings.
+  - Downloads verified `aarch64` release bundle + SHA-256 checksum into a staging slot, atomically swaps binary/assets (with automatic rollback if health check fails), and restarts `deckds`.
+- **LAN Debug, Config & Remote Web Control (Built-In Lightweight HTTP/WS Server):**
+  - Exposes a local LAN port (e.g., `http://<device-ip>:8080`, toggleable in Settings — runs natively on the device for external browsers on phone/PC, zero browser on the handheld).
+  - **Debug & Telemetry:** Live log stream, audio pipeline / ALSA / sample-rate status, DRM/input event monitor, CPU/RAM/battery stats, and one-click OTA / binary upload during hardware development.
+  - **Remote Control & Config:** Control playback, volume, queue, and library from any browser on the LAN, edit DeckDS settings / playlists, and trigger library rescan or Wi-Fi/BT configuration comfortably from a desktop keyboard.
