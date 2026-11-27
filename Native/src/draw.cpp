@@ -63,44 +63,44 @@ const Palette& colors(Theme theme, int accent)
     static const Palette obsidian[4] = {
         {color(0x0c0d10), color(0x15171d), color(0x1c1f27), color(0x252934), color(0x2c313d),
          color(0x414859), color(0xf5f2ea), color(0xaeb4c2), color(0x767d8e), color(0xff7a1a),
-         color(0xff7a1a, 46), color(0x120b05), color(0xff4757), color(0x171410), color(0x382a1a), color(0x343948)},
+         color(0xff7a1a, 46), color(0x120b05), color(0xff4757), color(0x171410), color(0x343948)},
         {color(0x0c0d10), color(0x15171d), color(0x1c1f27), color(0x252934), color(0x2c313d),
          color(0x414859), color(0xf5f2ea), color(0xaeb4c2), color(0x767d8e), color(0x38bdf8),
-         color(0x38bdf8, 46), color(0x06131c), color(0xff4757), color(0x171410), color(0x382a1a), color(0x343948)},
+         color(0x38bdf8, 46), color(0x06131c), color(0xff4757), color(0x171410), color(0x343948)},
         {color(0x0c0d10), color(0x15171d), color(0x1c1f27), color(0x252934), color(0x2c313d),
          color(0x414859), color(0xf5f2ea), color(0xaeb4c2), color(0x767d8e), color(0x2dd4a0),
-         color(0x2dd4a0, 46), color(0x051610), color(0xff4757), color(0x171410), color(0x382a1a), color(0x343948)},
+         color(0x2dd4a0, 46), color(0x051610), color(0xff4757), color(0x171410), color(0x343948)},
         {color(0x0c0d10), color(0x15171d), color(0x1c1f27), color(0x252934), color(0x2c313d),
          color(0x414859), color(0xf5f2ea), color(0xaeb4c2), color(0x767d8e), color(0xff5c7c),
-         color(0xff5c7c, 46), color(0x1a060b), color(0xff4757), color(0x171410), color(0x382a1a), color(0x343948)},
+         color(0xff5c7c, 46), color(0x1a060b), color(0xff4757), color(0x171410), color(0x343948)},
     };
     static const Palette ceramic[4] = {
         {color(0xeae5dc), color(0xdfd9cd), color(0xf7f4ed), color(0xffffff), color(0xccc4b5),
          color(0xaba291), color(0x16171b), color(0x494c55), color(0x73767f), color(0xe6481e),
-         color(0xe6481e, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xfff9ea), color(0xc3bbb0)},
+         color(0xe6481e, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xc3bbb0)},
         {color(0xeae5dc), color(0xdfd9cd), color(0xf7f4ed), color(0xffffff), color(0xccc4b5),
          color(0xaba291), color(0x16171b), color(0x494c55), color(0x73767f), color(0x2563eb),
-         color(0x2563eb, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xfff9ea), color(0xc3bbb0)},
+         color(0x2563eb, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xc3bbb0)},
         {color(0xeae5dc), color(0xdfd9cd), color(0xf7f4ed), color(0xffffff), color(0xccc4b5),
          color(0xaba291), color(0x16171b), color(0x494c55), color(0x73767f), color(0x15803d),
-         color(0x15803d, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xfff9ea), color(0xc3bbb0)},
+         color(0x15803d, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xc3bbb0)},
         {color(0xeae5dc), color(0xdfd9cd), color(0xf7f4ed), color(0xffffff), color(0xccc4b5),
          color(0xaba291), color(0x16171b), color(0x494c55), color(0x73767f), color(0x7e22ce),
-         color(0x7e22ce, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xfff9ea), color(0xc3bbb0)},
+         color(0x7e22ce, 36), color(0xffffff), color(0xd92d3a), color(0xf4eedf), color(0xc3bbb0)},
     };
     static const Palette vfd[4] = {
         {color(0x03080a), color(0x071115), color(0x09171c), color(0x0e242b), color(0x133540),
          color(0x1f5563), color(0x72ffe0), color(0x36b8a2), color(0x1e6b62), color(0x38f2c6),
-         color(0x38f2c6, 41), color(0x03120f), color(0xff4a5e), color(0x040e12), color(0x38f2c6), color(0x0f2c33)},
+         color(0x38f2c6, 41), color(0x03120f), color(0xff4a5e), color(0x040e12), color(0x0f2c33)},
         {color(0x090602), color(0x120c04), color(0x181005), color(0x241808), color(0x3d290a),
          color(0x664512), color(0xffd97d), color(0xcc8e28), color(0x7a5314), color(0xffb020),
-         color(0xffb020, 44), color(0x170e02), color(0xff4a5e), color(0x0f0a03), color(0xffb020), color(0x2e1f08)},
+         color(0xffb020, 44), color(0x170e02), color(0xff4a5e), color(0x0f0a03), color(0x2e1f08)},
         {color(0x030905), color(0x061209), color(0x08180d), color(0x0d2614), color(0x113b1e),
          color(0x1d6132), color(0x8affaa), color(0x32b85b), color(0x1b6934), color(0x39e868),
-         color(0x39e868, 41), color(0x031408), color(0xff4a5e), color(0x041007), color(0x39e868), color(0x0d2e17)},
+         color(0x39e868, 41), color(0x031408), color(0xff4a5e), color(0x041007), color(0x0d2e17)},
         {color(0x03080b), color(0x061016), color(0x08161e), color(0x0d2330), color(0x123542),
          color(0x1e576b), color(0xb3f2ff), color(0x43a8c7), color(0x226075), color(0x5ce1ff),
-         color(0x5ce1ff, 41), color(0x031117), color(0xff4a5e), color(0x040d13), color(0x5ce1ff), color(0x0e2a36)},
+         color(0x5ce1ff, 41), color(0x031117), color(0xff4a5e), color(0x040d13), color(0x0e2a36)},
     };
     if (theme == Theme::Ceramic) return ceramic[idx];
     if (theme == Theme::Vfd) return vfd[idx];
@@ -600,6 +600,18 @@ void Draw::label(std::string_view text, Rect r, Size size, Color ink, Face type,
     }
 }
 
+namespace {
+SDL_Surface* loadSvg(std::string_view name, int width, int height)
+{
+    const auto asset = std::ranges::find(svgAssets, name, &IconAsset::name);
+    if (asset == std::end(svgAssets))
+        return nullptr;
+    const std::unique_ptr<SDL_IOStream, decltype(&SDL_CloseIO)> input(
+        SDL_IOFromConstMem(asset->svg.data(), asset->svg.size()), SDL_CloseIO);
+    return input ? IMG_LoadSizedSVG_IO(input.get(), width, height) : nullptr;
+}
+}
+
 SDL_Texture* Draw::iconTexture(std::string_view name, int pixels)
 {
     const auto key = std::tuple(std::string(name), pixels);
@@ -634,15 +646,8 @@ SDL_Texture* Draw::iconTexture(std::string_view name, int pixels)
             }
         }
     }
-    if (!surface) {
-        const auto found = std::ranges::find(svgAssets, name, &IconAsset::name);
-        if (found == std::end(svgAssets))
-            return nullptr;
-        if (auto* io = SDL_IOFromConstMem(found->svg.data(), found->svg.size())) {
-            surface = IMG_LoadSizedSVG_IO(io, 96, 96);
-            SDL_CloseIO(io);
-        }
-    }
+    if (!surface)
+        surface = loadSvg(name, 96, 96);
     if (!surface)
         return nullptr;
     auto* value = SDL_CreateTextureFromSurface(renderer, surface);
@@ -776,40 +781,19 @@ void Draw::vuDial(Rect area)
     const bool ceramic = theme == Theme::Ceramic;
     auto*& dial = vuDials[ceramic ? 1 : 0];
     if (!dial) {
-        constexpr int width = 478, height = 540;
-        if (auto* surface = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32)) {
-            const Color center = ceramic ? color(0xfffdf7) : p().vuGlow;
-            const Color base = p().vuBase;
-            const Color edge = ceramic ? color(0xddd4c2) : color(0x0e0c0a);
-            const float stop = ceramic ? .55f : .42f;
-            constexpr float startRadius = 16, rise = width * .72f - startRadius;
-            constexpr float startY = height * .92f, travel = height * .52f - startY;
-            constexpr float a = travel * travel - rise * rise;
-            auto* pixels = static_cast<Uint8*>(surface->pixels);
-            for (int y = 0; y < height; ++y) {
-                const float py = y + .5f - startY;
-                const float b = -2 * (py * travel + startRadius * rise);
-                for (int x = 0; x < width; ++x) {
-                    const float px = x + .5f - width / 2.f;
-                    const float c = px * px + py * py - startRadius * startRadius;
-                    const float t = c < 0 ? 0.f :
-                        std::clamp((-b - std::sqrt(std::max(0.f, b * b - 4 * a * c))) / (2 * a), 0.f, 1.f);
-                    const Color ink = t < stop ? mix(center, base, t / stop)
-                                               : mix(base, edge, (t - stop) / (1 - stop));
-                    auto* target = pixels + y * surface->pitch + x * 4;
-                    target[0] = ink.r;
-                    target[1] = ink.g;
-                    target[2] = ink.b;
-                    target[3] = 255;
-                }
-            }
+        const auto asset = ceramic ? "vu-ceramic" : "vu-obsidian";
+        const int scale = std::max(area.w, area.h) * 2 <= maxLabelTextureWidth ? 2 : 1;
+        if (auto* surface = loadSvg(asset, static_cast<int>(area.w * scale), static_cast<int>(area.h * scale))) {
             dial = SDL_CreateTextureFromSurface(renderer, surface);
             SDL_DestroySurface(surface);
+            if (dial)
+                SDL_SetTextureScaleMode(dial, SDL_SCALEMODE_LINEAR);
         }
     }
-    round(area, 16, p().strong);
     if (dial)
-        roundedTexture(dial, inset(area, 2), 14);
+        texture(dial, area);
+    else
+        frame(area, 16, p().vuBase, p().strong);
 }
 
 void Draw::artwork(const Track* track, Rect r)

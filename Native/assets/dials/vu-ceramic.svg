@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="478" height="540" viewBox="0 0 478 540">
+  <defs>
+    <radialGradient id="face" gradientUnits="userSpaceOnUse" cx="239" cy="486" r="490">
+      <stop offset="0" stop-color="#fffdf7"/>
+      <stop offset=".48" stop-color="#f8f2e6"/>
+      <stop offset=".82" stop-color="#f0e8d8"/>
+      <stop offset="1" stop-color="#e6ddcb"/>
+    </radialGradient>
+  </defs>
+  <rect x="1" y="1" width="476" height="538" rx="15" fill="url(#face)" stroke="#aba291" stroke-width="2"/>
+
+  <!-- Pivot (239, 506), radius 336. The red arc starts at the 0 VU mark. -->
+  <g fill="none">
+    <path d="M41.504 234.170 A336 336 0 0 1 330.712 182.759" stroke="#594d3d" stroke-width="3"/>
+    <path d="M330.712 182.759 A336 336 0 0 1 436.496 234.170" stroke="#d92d3a" stroke-width="4.5"/>
+
+    <!-- Minor marks at -18, -16, -14, -12, -9, -8, -6, -5, -4, -2, -1 dB. -->
+    <path stroke="#887863" stroke-width="1.75" d="
+      M56.828 223.671 L62.792 232.914 M72.709 214.035 L78.153 223.594
+      M89.099 205.292 L94.006 215.136 M105.946 197.467 L110.302 207.568
+      M141.885 184.341 L145.065 194.871 M160.905 179.202 L163.461 189.900
+      M200.032 172.267 L201.307 183.193 M220.010 170.537 L220.631 181.519
+      M240.056 170.002 L240.021 181.002 M283.903 173.014 L282.433 183.915
+      M307.481 177.053 L305.239 187.822"/>
+    <path stroke="#d92d3a" stroke-width="1.75" d="M367.907 195.711 L363.686 205.870 M403.330 212.927 L397.950 222.522"/>
+
+    <!-- Major marks at -20, -10, -7, -3, 0, +3 dB. -->
+    <path stroke="#2c2720" stroke-width="2.75" d="
+      M35.626 226.080 L51.497 247.924 M119.754 181.198 L129.059 206.544
+      M178.442 165.341 L183.168 191.924 M260.726 160.683 L259.030 187.629"/>
+    <path stroke="#d92d3a" stroke-width="2.75" d="M333.441 173.138 L326.072 199.113 M442.374 226.080 L426.503 247.924"/>
+  </g>
+</svg>

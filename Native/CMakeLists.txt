@@ -11,7 +11,9 @@ find_program(NODEJS NAMES node nodejs REQUIRED)
 
 get_filename_component(DESIGN "${CMAKE_CURRENT_SOURCE_DIR}/../Design" ABSOLUTE)
 set(ASSET_HEADER "${CMAKE_CURRENT_BINARY_DIR}/design_assets.inc")
-set(NATIVE_ICONS
+set(NATIVE_SVGS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/dials/vu-ceramic.svg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/dials/vu-obsidian.svg"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/arrow-repeat.svg"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/battery.svg"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/close.svg"
@@ -20,8 +22,8 @@ set(NATIVE_ICONS
 )
 add_custom_command(
     OUTPUT "${ASSET_HEADER}"
-    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tools/design_assets.py" "${DESIGN}" "${ASSET_HEADER}" "${NODEJS}" ${NATIVE_ICONS}
-    DEPENDS tools/design_assets.py "${DESIGN}/index.html" "${DESIGN}/app.js" "${DESIGN}/vfd-icons.js" "${DESIGN}/audio-engine.js" ${NATIVE_ICONS}
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tools/design_assets.py" "${DESIGN}" "${ASSET_HEADER}" "${NODEJS}" ${NATIVE_SVGS}
+    DEPENDS tools/design_assets.py "${DESIGN}/index.html" "${DESIGN}/app.js" "${DESIGN}/vfd-icons.js" "${DESIGN}/audio-engine.js" ${NATIVE_SVGS}
     VERBATIM
 )
 

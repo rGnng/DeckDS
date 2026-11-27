@@ -53,16 +53,10 @@ void vu(Draw& d, float x, float level, float held, std::string_view channel)
     const float cx = x + r.w / 2;
     const float cy = r.y + r.h - 34;
     constexpr float start = -.70f * pi, end = -.30f * pi;
-    constexpr float red = std::lerp(start, end, vuRedPosition);
     const bool overload = level > .84f;
     const Color ink = ceramic ? color(0x2c2720) : color(0xf5e4c8);
     const Color soft = ceramic ? alpha(ink, .55f) : color(0xffe4b9, 140);
 
-    const auto tick = [&](float angle, float radius, float from, float to, Color c, float width) {
-        const float dx = std::cos(angle), dy = std::sin(angle);
-        d.line(cx + dx * (radius + from), cy + dy * (radius + from),
-               cx + dx * (radius + to), cy + dy * (radius + to), c, width);
-    };
     const auto markLabels = [&](float radius, Color normal) {
         for (const auto& mark : vuMarks) {
             const float angle = std::lerp(start, end, mark.position);
@@ -107,19 +101,9 @@ void vu(Draw& d, float x, float level, float held, std::string_view channel)
         return;
     }
 
-    constexpr float radius = 336;
+    constexpr float radius = 336; // Matches the scale on the SVG dial faces.
     d.vuDial(r);
     d.clip(inset(r, 2));
-    arc(d, cx, cy, radius, start, red, ceramic ? color(0x3a342a) : color(0xffe4b9, 199), 5);
-    arc(d, cx, cy, radius, red, end, p.danger, 8);
-    for (int i = 1; i < 20; ++i) {
-        const float position = i / 20.f;
-        tick(std::lerp(start, end, position), radius, -10, 5, position >= vuRedPosition ? p.danger : soft, 2);
-    }
-    for (const auto& mark : vuMarks) {
-        const Color tint = mark.position >= vuRedPosition ? p.danger : ink;
-        tick(std::lerp(start, end, mark.position), radius, -16, 12, tint, 3);
-    }
     markLabels(radius, ink);
     d.label(channel, {x + 28, r.y + 12, 140, 48}, Size::Caption, soft, Face::Mono, Align::Left, true);
     if (overload)

@@ -28,7 +28,7 @@ enum class Align { Left, Center, Right };
 
 struct Palette {
     Color bg, elevated, card, raised, border, strong, text, dim, muted, accent, soft,
-          accentInk, danger, vuBase, vuGlow, wave;
+          accentInk, danger, vuBase, wave;
 };
 struct AccentPreset {
     std::string_view name;
