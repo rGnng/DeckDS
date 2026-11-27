@@ -2,17 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
-#include <ctime>
 #include <numbers>
 
 namespace {
 constexpr float pi = std::numbers::pi_v<float>;
 constexpr Rect topArt{24, 118, 544, 544};
-
-std::string twoDigits(int value)
-{
-    return (value < 10 ? "0" : "") + std::to_string(value);
-}
 
 void arc(Draw& d, float cx, float cy, float r, float begin, float end, Color tint, float thickness)
 {
@@ -259,7 +253,7 @@ void drawStage(Draw& d, const Player& player, const Meter& meter, int stage, flo
 }
 
 void drawTopChrome(Draw& d, const Player& player, float dockTitle, std::string_view clockText,
-                   int batteryPercent, float progressSlide, float stageCentering)
+                   int batteryPercent, bool wifiConnected, bool bluetoothConnected, float progressSlide, float stageCentering)
 {
     const auto& p = d.p();
     const auto* track = player.track();
@@ -269,39 +263,36 @@ void drawTopChrome(Draw& d, const Player& player, float dockTitle, std::string_v
     constexpr float iconY = 16.f;
     constexpr Size statusSize = Size::Body;
     constexpr int statusWeight = 600;
-    constexpr float queueX = 68;
+    constexpr float formatX = 68.f;
     constexpr float gap = 18;
     const auto statusWidth = [&](std::string_view text) {
         return even(d.textWidth(text, statusSize, Face::Mono, false) + 4);
     };
     d.icon(track ? player.playing ? "play" : "pause" : "stop", {24, iconY, iconDim, iconDim}, p.dim);
-    const std::string queue = track ? twoDigits(static_cast<int>(player.history.size()) + 1) + " / " +
-        twoDigits(static_cast<int>(player.history.size() + player.queue.size()) + 1) : "00 / 00";
-    const float queueW = statusWidth(queue);
-    d.label(queue, {queueX, 0, queueW, 62}, statusSize, p.dim, Face::Mono, Align::Left, false, false, statusWeight);
 
     const float clockW = std::max(68.f, statusWidth(clockText));
     const float clockX = 1000.f - clockW;
     const float batX = clockX - gap - iconDim;
-    const float starX = batX - gap - iconDim;
+    const float wifiX = batX - gap - iconDim;
+    const float bluetoothX = wifiX - gap - iconDim;
+    const float starX = bluetoothX - gap - iconDim;
     if (track) {
         const bool starred = player.stars[player.current];
-        const float formatX = std::max(182.f, queueX + queueW + 12.f);
-        const float formatRight = (starred ? starX : batX) - gap;
+        const float formatRight = (starred ? starX : bluetoothX) - gap;
         const auto codec = track->format.substr(0, track->format.find(' '));
-        auto rate = std::string(track->rate);
-        if (const auto zero = rate.find(".0 "); zero != std::string::npos)
-            rate.erase(zero, 2);
-        d.label(std::string(codec) + " " + rate, {formatX, 0, formatRight - formatX, 62},
+        d.label(codec, {formatX, 0, formatRight - formatX, 62},
                 statusSize, p.dim, Face::Mono, Align::Left, false, true, statusWeight);
         if (starred)
             d.icon("star-filled", {starX, iconY, iconDim, iconDim}, p.dim);
     }
+    d.icon("bluetooth", {bluetoothX, iconY, iconDim, iconDim}, bluetoothConnected ? p.dim : alpha(p.dim, .32f), 0);
+    d.icon(wifiConnected ? "wifi" : "wifi-off", {wifiX, iconY, iconDim, iconDim},
+           wifiConnected ? p.dim : p.muted, 0);
     d.icon("battery", {batX, iconY, iconDim, iconDim}, p.dim, 0);
     const int batterySteps = (std::clamp(batteryPercent, 0, 100) + 5) / 10;
-    // Bootstrap's full icon fills x=2 to 12 and y=6 to 10 in its 16 px viewBox.
+    // The fill spans x=4–24 and y=11–21 within the 32 px battery icon.
     if (batterySteps > 0)
-        d.rect({batX + 4, iconY + 12, 2.f * batterySteps, 8}, p.dim);
+        d.rect({batX + 4, iconY + 11, 2.f * batterySteps, 10}, p.dim);
 
     d.label(clockText, {clockX, 0, clockW, 62}, statusSize, p.dim, Face::Mono, Align::Right, false, false, statusWeight);
     if (track && dockTitle > 0) {

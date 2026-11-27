@@ -1,4 +1,5 @@
 #include "studio.hpp"
+#include "wifi.hpp"
 
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
@@ -212,7 +213,7 @@ bool savePreviewSettings(const std::filesystem::path& path, std::string_view set
     return false;
 }
 
-int run(bool separate, bool kiosk, bool longMetadata)
+int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo)
 {
     const char* base = SDL_GetBasePath();
     if (!base) {
@@ -223,12 +224,14 @@ int run(bool separate, bool kiosk, bool longMetadata)
     DeckUi app;
     if (longMetadata)
         app.useLongMetadataFixture();
-    const auto settingsPath = previewSettingsPath(longMetadata);
+    const auto settingsPath = bluetoothDemo ? std::filesystem::path{} : previewSettingsPath(longMetadata);
     if (!settingsPath.empty()) {
         std::ifstream settings(settingsPath);
         if (!app.loadPreview(settings) && !longMetadata)
             loadClockSettings(settingsPath.parent_path() / "clock.conf", app);
     }
+    if (bluetoothDemo)
+        app.useBluetoothFixture();
     const auto previewState = [&] {
         std::ostringstream settings;
         app.savePreview(settings);
@@ -294,6 +297,7 @@ int run(bool separate, bool kiosk, bool longMetadata)
     bool triggerLeft = false, triggerRight = false;
     Uint64 tick = SDL_GetTicksNS();
     Uint64 nextBatteryPoll = 0;
+    Uint64 nextWifiPoll = 0;
     constexpr Uint64 saveInterval = 3'000'000'000ULL;
     Uint64 nextSettingsSave = tick + saveInterval;
     while (running) {
@@ -412,6 +416,10 @@ int run(bool separate, bool kiosk, bool longMetadata)
             app.batteryPercent = powerState == SDL_POWERSTATE_NO_BATTERY ? 100 : percent;
             nextBatteryPoll = now + 30'000'000'000ULL;
         }
+        if (now >= nextWifiPoll) {
+            app.wifiConnected = isWifiConnected();
+            nextWifiPoll = now + 3'000'000'000ULL;
+        }
         app.update(dt);
         if (!settingsPath.empty() && now >= nextSettingsSave) {
             saveChangedSettings();
@@ -433,7 +441,7 @@ int run(bool separate, bool kiosk, bool longMetadata)
     }
     return 0;
 }
-int dumpViews(const std::filesystem::path& outDir, bool longMetadata)
+int dumpViews(const std::filesystem::path& outDir, bool longMetadata, bool bluetoothDemo)
 {
     const char* base = SDL_GetBasePath();
     if (!base)
@@ -460,16 +468,18 @@ int dumpViews(const std::filesystem::path& outDir, bool longMetadata)
             "00_deck_jp", "01_albums_minus1_play", "02_albums_search_osk", "03_songs_star_nodate",
             "04_songs_bottom_scroll", "05_order_songs", "06_artist_detail", "07_playlist_detail",
             "08_playlist_picker", "09_settings_accents_sfx", "10_vfd_amber_vu_jp", "11_ceramic_cobalt_info",
-            "12_settings_lang_clock_12h", "13_settings_japanese_ui", "14_order_songs_japanese_ui",
+            "12_settings_clock_12h", "13_settings_lid_close", "14_audio_output_10_devices",
             "15_long_deck", "16_long_albums_grid", "17_long_albums_list", "18_long_album_detail",
             "19_long_artists", "20_long_artist_detail", "21_long_songs", "22_long_playlist_detail",
             "23_long_queue", "24_long_context", "25_long_info", "26_long_vfd_spectrum"
         };
+        constexpr int bluetoothView = 14;
         constexpr int firstLongView = 15;
         if (longMetadata)
             ui.useLongMetadataFixture();
-        const int end = longMetadata ? static_cast<int>(std::size(names)) : firstLongView;
-        for (int i = longMetadata ? firstLongView : 0; i < end; ++i) {
+        const int start = bluetoothDemo ? bluetoothView : longMetadata ? firstLongView : 0;
+        const int end = !bluetoothDemo && longMetadata ? static_cast<int>(std::size(names)) : firstLongView;
+        for (int i = start; i < end; ++i) {
             ui.configureSnapshot(i);
             SDL_SetRenderTarget(ren, topTex);
             ui.upper(draw, fadeTex);
@@ -495,16 +505,17 @@ int dumpViews(const std::filesystem::path& outDir, bool longMetadata)
 
 int main(int argc, char** argv)
 {
-    bool separate = false, kiosk = false, longMetadata = false;
+    bool separate = false, kiosk = false, longMetadata = false, bluetoothDemo = false;
     std::filesystem::path dumpDir;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         if (arg == "--panels") separate = true;
         else if (arg == "--kiosk") kiosk = separate = true;
         else if (arg == "--long-metadata") longMetadata = true;
+        else if (arg == "--bluetooth-demo") bluetoothDemo = true;
         else if (arg == "--dump-views" && i + 1 < argc) dumpDir = argv[++i];
         else {
-            std::cout << "Usage: DeckDS [--panels | --kiosk | --dump-views <dir>] [--long-metadata]\n";
+            std::cout << "Usage: DeckDS [--panels | --kiosk | --dump-views <dir>] [--long-metadata] [--bluetooth-demo]\n";
             return arg == "--help" ? 0 : 2;
         }
     }
@@ -522,7 +533,8 @@ int main(int argc, char** argv)
         SDL_Quit();
         return 1;
     }
-    const int result = dumpDir.empty() ? run(separate, kiosk, longMetadata) : dumpViews(dumpDir, longMetadata);
+    const int result = dumpDir.empty() ? run(separate, kiosk, longMetadata, bluetoothDemo)
+                                       : dumpViews(dumpDir, longMetadata, bluetoothDemo);
     TTF_Quit();
     SDL_Quit();
     return result;

@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,7 +45,7 @@ public:
 
     std::vector<Track> tracks;
     std::vector<Playlist> playlists;
-    std::vector<int> queue, history;
+    std::vector<int> queue, history, played;
     std::vector<bool> stars;
     int current = 0;
     int volume = 76;
@@ -52,16 +53,20 @@ public:
     int sfxVolume = 1; // 0 = Low, 1 = Mid, 2 = High
     bool sfxSpeaker = false; // false = Current Output, true = Built-in Speaker
     bool shuffle = false, playing = false, mute = false, sfx = true;
+    bool currentStarted = false;
     bool largeLibrary = false;
     unsigned catalogRevision = 0;
     double seconds = 0;
 
     const Track* track() const;
     float progress() const;
-    void update(double dt);
-    void playToggle();
+    // Reports the queue index consumed on advance, or -1 if playback reaches the end.
+    std::optional<int> update(double dt);
+    std::optional<int> playToggle();
     void playFrom(std::vector<int> order, int index = 0);
-    void next();
+    void playNow(int trackIndex);
+    void playQueued(int index);
+    int next();
     void previous();
     void makeNext(int trackIndex);
     void append(const std::vector<int>& ids);
@@ -69,6 +74,7 @@ public:
     void seekSeconds(float delta);
     void adjustVolume(int delta);
     void toggleStar(int index);
+    void toggleShuffle();
     void chime(std::string_view cue);
     void chime(std::string_view cue, bool release);
     int librarySize() const;
@@ -85,6 +91,7 @@ private:
     bool audioUnavailable = false, speakerUnavailable = false;
     int queuedFrames(SDL_AudioStream* stream) const;
     void feedAudio();
+    void recordPlayed();
     void start(int index);
     void stop();
     void resetAudio(bool flushStream = true);

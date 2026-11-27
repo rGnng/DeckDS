@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bluetooth.hpp"
 #include "stage.hpp"
 
 #include <functional>
@@ -7,25 +8,22 @@
 #include <optional>
 
 enum class PreviewScale { Fit, Integer, Studio, PixelOne, PixelTwo, Count };
-enum class Language { English, Japanese };
 
 class DeckUi {
 public:
     enum class Tab { Deck, Albums, Artists, Playlists, Songs, Queue };
     Theme theme = Theme::Obsidian;
-    Language language = Language::English;
     std::array<int, 3> themeAccents{0, 0, 0};
     bool clock24h = true;
     int clockOffsetMinutes = 0;
     int batteryPercent = 100;
+    bool wifiConnected = false;
     Player player;
     bool lid = false;
     bool showKeys = false;
     PreviewScale scaleMode = PreviewScale::Fit;
 
     int currentAccent() const { return themeAccents[static_cast<int>(theme)]; }
-    bool jp() const { return language == Language::Japanese; }
-    std::string_view tr(std::string_view en, std::string_view ja) const { return jp() ? ja : en; }
     std::string clockString() const;
     bool textInput() const;
     bool displaysOff() const;
@@ -44,17 +42,19 @@ public:
     bool loadPreview(std::istream& settings);
     void savePreview(std::ostream& settings) const;
     void useLongMetadataFixture();
+    void useBluetoothFixture();
     void configureSnapshot(int preset);
 
 private:
     enum class Action {
         None, Tab, Settings, Context, Scrub, Previous, Play, Next, Star, Volume, Mute, Output,
         Stage, Shuffle, Repeat, Album, ClearSearch, Search, Grid, Order, NewPlaylist, CreatePlaylist,
-        ListPlay, ListShuffle, Row, RowMenu, PlayNext, Back, Rail, SettingsRail, Option, Key,
-        DetailQueue, Brightness
+        ListPlay, ListShuffle, Row, RowMenu, PlayNext, Back, Rail, SettingsRail, OutputRail, Option, Key,
+        DetailQueue, Brightness, BluetoothUnpair
     };
     enum class Sheet { None, Settings, Track, Info, Order, Output, Playlist };
     enum class Input { None, Search, Playlist };
+    enum class QueuePart { None, Played, Current, UpNext, EmptyUpNext };
     enum class SortField { Added, Name, Year, Artist, Album, AlbumCount, SongCount };
     struct SortSpec {
         SortField field;
@@ -75,12 +75,15 @@ private:
         std::string added;
         Rect box{};
         bool albumTrack = false;
+        QueuePart queuePart = QueuePart::None;
+        int queueIndex = -1;
     };
     struct RowKey {
         explicit RowKey(const Row& row);
         bool matches(const Row& row) const;
 
         Tab source;
+        QueuePart queuePart;
         int track, playlist;
         std::string title;
     };
@@ -107,6 +110,7 @@ private:
     Tab tab = Tab::Deck;
     int stage = 0, outgoingStage = 0;
     float stageTime = 1, tabTime = 1;
+    float queueLabelTime = 0.f;
     // The first phase moves the upper strip. The second phase reveals the lower waveform.
     float deckProgressTransition = 2.f;
     float stageCentering = 1.f;
@@ -118,6 +122,7 @@ private:
     float tabSlideDwell = 0;
 
     Meter meter;
+    BluetoothPairing bluetooth;
     int brightness = 6, output = 0, lastNonZeroVolume = 76;
     bool pocket = true, albumsInGrid = true;
     bool screenOff = false, poweredOff = false, powerDown = false, powerLong = false;
@@ -141,7 +146,9 @@ private:
     int marqueeRow = -1, touchSelectedTrack = -1;
     std::string marqueeTitle;
     float rowMarqueeTime = 0.f;
-    int contextTrack = -1, contextPlaylist = -1;
+    int contextTrack = -1, contextPlaylist = -1, contextQueueIndex = -1;
+    QueuePart contextQueuePart = QueuePart::None;
+    std::string armedBluetoothDevice;
     std::vector<Detail> details;
     std::array<CatalogPosition, 6> rootPositions{};
     std::vector<Hit> hits;
@@ -157,18 +164,19 @@ private:
     };
     std::map<SDL_Keycode, HeldKey> heldKeys;
     std::map<SDL_Keycode, std::pair<Action, int>> heldKeyUi;
-    bool dragging = false, held = false, listPointer = false, settingsPointer = false;
+    bool dragging = false, held = false, listPointer = false, settingsPointer = false, sheetListPointer = false;
     int seekDirection = 0;
     float seekHold = 0;
     float analogPosition = 0;
-    Rect listBox{}, settingsBox{12, 192, 924, 560};
+    Rect listBox{}, settingsBox{12, 192, 924, 560}, sheetListBox{};
     float scroll = 0, scrollFrom = 0, scrollTarget = 0, scrollTime = 1, scrollLimit = 0;
     float settingsScroll = 0, settingsScrollFrom = 0, settingsScrollTarget = 0, settingsScrollTime = 1, settingsLimit = 0;
     float railPopup = 0;
-    int infoScroll = 0, infoMaxScroll = 180;
+    int sheetListScroll = 0, sheetListLimit = 180;
     mutable std::vector<Row> cachedRows;
     mutable std::vector<LayoutHeader> cachedHeaders;
     mutable float cachedContentHeight = 0;
+    mutable float cachedUpNextOffset = 0;
     mutable int cachedArtistAlbumCount = 0;
     mutable unsigned cachedPlayerRevision = 0;
     mutable bool rowsValid = false;
@@ -187,13 +195,17 @@ private:
     void catalog(Draw& d);
     void keypadUi(Draw& d);
     void overlay(Draw& d);
+    void audioOutputUi(Draw& d);
+    int audioOutputRows() const;
+    const BluetoothPairing::Device* audioDevice(int row) const;
+    void revealAudioOutputRow();
     void drawScrollbar(Draw& d, Rect rail, float pos, float limit, Action act,
                        const std::vector<std::string>& ticks);
     void button(Draw& d, Rect r, Action action, int value, std::string_view glyph = {},
                 std::string_view label = {}, bool focus = false, bool hero = false,
                 int iconSize = 32, std::optional<Color> background = std::nullopt,
                 std::optional<Color> ink = std::nullopt, int vfdSize = 32, int corner = 14,
-                bool marker = false);
+                bool marker = false, Size labelSize = Size::Sub, Align glyphAlign = Align::Left);
     void expandingButton(Draw& d, Rect r, Action action, int value, std::string_view glyph,
                          std::string_view label, float expandAnim, bool focus, bool primary = false,
                          int iconSize = 24);
@@ -203,20 +215,26 @@ private:
     void targetScroll(float target, bool animate = true);
     void targetSettingsScroll(float target, bool animate = true);
     float expectedCatalogHeight() const;
+    float catalogScrollLimit(float viewHeight, float keyboardPad = 0) const;
     CatalogPosition catalogPosition() const;
     void rememberRootPosition();
     void restoreCatalogPosition(const CatalogPosition& position, bool revealItem = false);
+    CatalogPosition defaultCatalogPosition() const;
     void keepSelectedVisible();
     void keepSettingsVisible();
     void scrubRail(float y);
     void scrubSettingsRail(float y);
+    void scrubOutputRail(float y);
     void scrubPosition(Action action, float x);
     void openInput(Input field);
     void closeInput(bool confirm);
     void setTab(int index);
     void settleTab();
     void selectRow(int index);
-    void openContext(int index, int playlist = -1);
+    void focusQueueCurrent();
+    void followQueuePlaybackChange(int removedIndex, bool prepended = false);
+    void editQueueEntry(int index, bool remove);
+    void openContext(int index, int playlist = -1, QueuePart queuePart = QueuePart::None, int queueIndex = -1);
     void openAlbum(int index);
     void openSheet(Sheet next);
     void cycleStage();

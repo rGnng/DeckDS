@@ -11,5 +11,5 @@ struct Meter {
 
 void drawStage(Draw& draw, const Player& player, const Meter& meter, int stage, float stageCentering);
 void drawTopChrome(Draw& draw, const Player& player, float dockTitle, std::string_view clockText,
-                   int batteryPercent, float progressSlide, float stageCentering);
+                   int batteryPercent, bool wifiConnected, bool bluetoothConnected, float progressSlide, float stageCentering);
 void drawWaveform(Draw& draw, const Player& player, Rect area, float reveal);

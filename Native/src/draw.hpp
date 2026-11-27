@@ -32,7 +32,6 @@ struct Palette {
 };
 struct AccentPreset {
     std::string_view name;
-    std::string_view jaName;
     Color swatch;
 };
 const Palette& colors(Theme theme, int accent = 0);
@@ -67,6 +66,7 @@ public:
                Align align = Align::Left, bool strong = false, bool fadeOverflow = false, int weight = 0,
                float marqueeTime = -1.f);
     float textWidth(std::string_view text, Size size, Face type = Face::Display, bool strong = false);
+    std::vector<std::string> wrapText(std::string_view text, float width, Size size, Face type, bool strong);
     // A zero pixel size uses the SVG at the requested rectangle in every theme.
     void icon(std::string_view name, Rect target, Color tint, int pixelSize = 32);
     void art(const Track* track, Rect target, float corner = 0);

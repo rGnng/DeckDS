@@ -52,7 +52,9 @@ bool DeckUi::loadPreview(std::istream& settings)
             for (auto& accent : themeAccents)
                 readRange(input, accent, 0, 3);
         } else if (key == "system") {
-            readRange(input, language, 0, static_cast<int>(Language::Japanese));
+            // The first field was the interface language in earlier preview settings.
+            std::string legacyLanguage;
+            input >> legacyLanguage;
             readRange(input, pocket, 0, 1);
             readRange(input, clock24h, 0, 1);
             readRange(input, clockOffsetMinutes, 0, 24 * 60 - 1);
@@ -80,6 +82,10 @@ bool DeckUi::loadPreview(std::istream& settings)
             readRange(input, player.sfx, 0, 1);
             readRange(input, player.sfxVolume, 0, 2);
             readRange(input, player.sfxSpeaker, 0, 1);
+        } else if (key == "previewBluetooth" || key == "previewBluetoothPaired") {
+            std::string id;
+            if (input >> std::quoted(id))
+                bluetooth.restoreDemoDevice(id, key == "previewBluetooth");
         } else if (key == "position") {
             std::string id;
             int seconds = 0;
@@ -90,12 +96,15 @@ bool DeckUi::loadPreview(std::istream& settings)
                 } else if (const auto found = trackIndices.find(id); found != trackIndices.end()) {
                     player.current = found->second;
                     player.seconds = std::clamp(seconds, 0, std::max(0, player.track()->duration - 1));
+                    readRange(input, player.currentStarted, 0, 1);
                 }
             }
         } else if (key == "queue") {
             player.queue = readTrackList(input);
         } else if (key == "history") {
             player.history = readTrackList(input);
+        } else if (key == "played") {
+            player.played = readTrackList(input);
         } else if (key == "stars") {
             std::fill(player.stars.begin(), player.stars.end(), false);
             for (int index : readTrackList(input))
@@ -107,6 +116,9 @@ bool DeckUi::loadPreview(std::istream& settings)
         }
     }
 
+    // A saved Bluetooth route needs a connection before becoming active again.
+    if (output == 2 && bluetooth.connectedDevice().empty())
+        output = 0;
     setTab(static_cast<int>(savedTab));
     settleTab();
     return true;
@@ -119,7 +131,7 @@ void DeckUi::savePreview(std::ostream& settings) const
              << brightness << ' ' << stage;
     for (const int accent : themeAccents)
         settings << ' ' << accent;
-    settings << "\nsystem " << static_cast<int>(language) << ' ' << pocket << ' ' << clock24h << ' ' << clockOffsetMinutes
+    settings << "\nsystem 0 " << pocket << ' ' << clock24h << ' ' << clockOffsetMinutes
              << "\nlibrary " << static_cast<int>(tab) << ' ' << albumsInGrid << ' ' << player.largeLibrary << '\n';
     for (const auto sortedTab : {Tab::Albums, Tab::Artists, Tab::Songs}) {
         const auto index = static_cast<int>(sortedTab);
@@ -130,9 +142,15 @@ void DeckUi::savePreview(std::ostream& settings) const
     settings << "audio " << player.volume << ' ' << lastNonZeroVolume << ' ' << player.mute << ' ' << player.shuffle
              << ' ' << player.repeat << ' ' << output << ' ' << player.sfx << ' ' << player.sfxVolume
              << ' ' << player.sfxSpeaker << '\n';
+    const auto activeBluetooth = bluetooth.demoDevice();
+    if (!activeBluetooth.empty())
+        settings << "previewBluetooth " << std::quoted(activeBluetooth) << '\n';
+    for (const auto id : bluetooth.demoPairedDevices())
+        if (id != activeBluetooth)
+            settings << "previewBluetoothPaired " << std::quoted(id) << '\n';
     const auto* track = player.track();
     settings << "position " << std::quoted(track ? track->id : std::string_view{})
-             << ' ' << static_cast<int>(player.seconds) << '\n';
+             << ' ' << static_cast<int>(player.seconds) << ' ' << player.currentStarted << '\n';
 
     const auto writeTrackList = [&](const std::vector<int>& indices) {
         for (const int index : indices)
@@ -143,6 +161,8 @@ void DeckUi::savePreview(std::ostream& settings) const
     writeTrackList(player.queue);
     settings << "history";
     writeTrackList(player.history);
+    settings << "played";
+    writeTrackList(player.played);
     settings << "stars";
     for (size_t i = 0; i < player.stars.size(); ++i)
         if (player.stars[i])

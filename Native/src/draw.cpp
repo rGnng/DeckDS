@@ -42,14 +42,14 @@ std::array<AccentPreset, 4> accentPresets(Theme theme)
 {
     switch (theme) {
     case Theme::Obsidian:
-        return {{{ "Amber", "アンバー", color(0xff7a1a) }, { "Cyan", "シアン", color(0x38bdf8) },
-                 { "Mint", "ミント", color(0x2dd4a0) }, { "Coral", "コーラル", color(0xff5c7c) }}};
+        return {{{ "Amber", color(0xff7a1a) }, { "Cyan", color(0x38bdf8) },
+                 { "Mint", color(0x2dd4a0) }, { "Coral", color(0xff5c7c) }}};
     case Theme::Ceramic:
-        return {{{ "Vermilion", "朱色", color(0xe6481e) }, { "Cobalt", "コバルト", color(0x2563eb) },
-                 { "Forest", "フォレスト", color(0x15803d) }, { "Plum", "プラム", color(0x7e22ce) }}};
+        return {{{ "Vermilion", color(0xe6481e) }, { "Cobalt", color(0x2563eb) },
+                 { "Forest", color(0x15803d) }, { "Plum", color(0x7e22ce) }}};
     case Theme::Vfd:
-        return {{{ "Aqua", "アクア", color(0x38f2c6) }, { "Amber", "アンバー", color(0xffb020) },
-                 { "Green", "グリーン", color(0x39e868) }, { "Ice", "アイス", color(0x5ce1ff) }}};
+        return {{{ "Aqua", color(0x38f2c6) }, { "Amber", color(0xffb020) },
+                 { "Green", color(0x39e868) }, { "Ice", color(0x5ce1ff) }}};
     }
     return {};
 }
@@ -440,6 +440,48 @@ float Draw::textWidth(std::string_view text, Size size, Face type, bool strong)
         }
     }
     return static_cast<float>(width);
+}
+
+std::vector<std::string> Draw::wrapText(std::string_view text, float width, Size size, Face type, bool strong)
+{
+    auto* face = font(type, size, strong ? 700 : 400);
+    const int maxWidth = static_cast<int>(width);
+    if (!face || maxWidth < 1)
+        return {};
+
+    const std::string rendered = vfd() ? vfdSanitize(text) : std::string(text);
+    std::string_view remaining = rendered;
+    std::vector<std::string> lines;
+    while (!remaining.empty()) {
+        const auto paragraph = remaining.substr(0, remaining.find_first_of("\r\n"));
+        size_t length = paragraph.size();
+        if (!paragraph.empty()) {
+            if (!TTF_MeasureString(face, paragraph.data(), paragraph.size(), maxWidth, nullptr, &length))
+                length = paragraph.size();
+            if (length < paragraph.size()) {
+                const auto space = paragraph.find_last_of(" \t", length);
+                if (space != std::string_view::npos && space > 0)
+                    length = space;
+                if (!length) {
+                    // A glyph wider than the entire line still consumes one UTF-8 code point.
+                    length = 1;
+                    while (length < paragraph.size() && (static_cast<unsigned char>(paragraph[length]) & 0xc0) == 0x80)
+                        ++length;
+                }
+            }
+        }
+        lines.emplace_back(paragraph.substr(0, length));
+        remaining.remove_prefix(length);
+        if (length == paragraph.size()) {
+            if (remaining.starts_with('\r'))
+                remaining.remove_prefix(1);
+            if (remaining.starts_with('\n'))
+                remaining.remove_prefix(1);
+        } else {
+            remaining.remove_prefix(std::min(remaining.find_first_not_of(" \t"), remaining.size()));
+        }
+    }
+    return lines;
 }
 
 bool Draw::appendTextTile(TextImage& image, TTF_Font* face, std::string_view remaining)

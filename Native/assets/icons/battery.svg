@@ -1,8 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#fff" class="bi bi-battery" viewBox="0 0 16 16">
-  <path d="M0 6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1zm14 3a1.5 1.5 0 0 1-1.5 1.5v-3A1.5 1.5 0 0 1 16 8"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <rect x="1" y="7" width="26" height="18" rx="3" fill="none" stroke="#fff" stroke-width="2"/>
+  <path fill="#fff" d="M27 12h1a4 4 0 0 1 0 8h-1z"/>
 </svg>
 <!--
-Bootstrap Icons battery.svg (v1.13.1)
+Based on Bootstrap Icons battery.svg (v1.13.1)
 The MIT License (MIT)
 
 Copyright (c) 2019-2024 The Bootstrap Authors

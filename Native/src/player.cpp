@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstdio>
 #include <numbers>
-#include <numeric>
 #include <random>
 
 namespace {
@@ -72,18 +71,20 @@ float Player::progress() const
 }
 int Player::librarySize() const { return largeLibrary ? static_cast<int>(tracks.size()) : defaultLibrarySize; }
 
-void Player::update(double dt)
+std::optional<int> Player::update(double dt)
 {
+    std::optional<int> removedIndex;
     if (playing && track()) {
         seconds += dt;
         if (seconds >= track()->duration) {
             if (repeat == 2)
                 seek(0);
             else
-                next();
+                removedIndex = next();
         }
     }
     feedAudio();
+    return removedIndex;
 }
 
 void Player::start(int index)
@@ -92,62 +93,101 @@ void Player::start(int index)
     current = index;
     seconds = 0;
     playing = true;
+    currentStarted = true;
     resetAudio();
 }
 
 void Player::stop()
 {
+    ++catalogRevision;
     current = -1;
     seconds = 0;
     playing = false;
     resetAudio(tones.empty());
 }
 
-void Player::playToggle()
+void Player::recordPlayed()
+{
+    if (currentStarted && track())
+        played.push_back(current);
+    currentStarted = false;
+}
+
+std::optional<int> Player::playToggle()
 {
     if (!track()) {
-        if (!queue.empty()) {
-            next();
-        } else {
-            std::vector<int> order(librarySize());
-            std::iota(order.begin(), order.end(), 0);
-            std::shuffle(order.begin(), order.end(), randomSource());
-            playFrom(std::move(order));
-        }
-        return;
+        if (!queue.empty())
+            return next();
+        if (!played.empty())
+            playFrom(played);
+        else if (!history.empty())
+            playFrom(history);
+        else
+            return std::nullopt;
+        return -1;
     }
     playing = !playing;
+    if (playing)
+        currentStarted = true;
     resetAudio(playing && tones.empty());
+    return std::nullopt;
 }
 
 void Player::playFrom(std::vector<int> order, int index)
 {
     if (index < 0 || index >= static_cast<int>(order.size()))
         return;
+    played.clear();
     history.assign(order.begin(), order.begin() + index);
     queue.assign(order.begin() + index + 1, order.end());
+    if (shuffle)
+        std::shuffle(queue.begin(), queue.end(), randomSource());
     start(order[index]);
 }
 
-void Player::next()
+void Player::playNow(int trackIndex)
+{
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(tracks.size()))
+        return;
+    if (track())
+        history.push_back(current);
+    recordPlayed();
+    start(trackIndex);
+}
+
+void Player::playQueued(int index)
+{
+    if (index < 0 || index >= static_cast<int>(queue.size()))
+        return;
+    const int trackIndex = queue[index];
+    queue.erase(queue.begin() + index);
+    playNow(trackIndex);
+}
+
+int Player::next()
 {
     if (queue.empty() && repeat == 1) {
         queue = history;
         if (current >= 0)
             queue.push_back(current);
+        if (shuffle)
+            std::shuffle(queue.begin(), queue.end(), randomSource());
         history.clear();
+        played.clear();
+        currentStarted = false;
         current = -1;
     }
     if (current >= 0)
         history.push_back(current);
+    recordPlayed();
     if (queue.empty()) {
         stop();
-        return;
+        return -1;
     }
-    const int pick = shuffle ? std::uniform_int_distribution<int>(0, static_cast<int>(queue.size()) - 1)(randomSource()) : 0;
-    const int index = queue[pick];
-    queue.erase(queue.begin() + pick);
+    const int index = queue.front();
+    queue.erase(queue.begin());
     start(index);
+    return 0;
 }
 
 void Player::previous()
@@ -160,6 +200,7 @@ void Player::previous()
         queue.insert(queue.begin(), current);
     const int index = history.back();
     history.pop_back();
+    recordPlayed();
     start(index);
 }
 
@@ -167,8 +208,13 @@ void Player::makeNext(int trackIndex)
 {
     if (trackIndex < 0 || trackIndex >= static_cast<int>(tracks.size()) || trackIndex == current)
         return;
-    std::erase(queue, trackIndex);
-    queue.insert(queue.begin(), trackIndex);
+    const auto queued = std::ranges::find(queue, trackIndex);
+    if (queued == queue.end())
+        queue.insert(queue.begin(), trackIndex);
+    else if (queued != queue.begin())
+        std::rotate(queue.begin(), queued, queued + 1);
+    else
+        return;
     ++catalogRevision;
 }
 
@@ -206,6 +252,15 @@ void Player::toggleStar(int index)
 {
     if (index >= 0 && index < static_cast<int>(stars.size())) {
         stars[index] = !stars[index];
+        ++catalogRevision;
+    }
+}
+
+void Player::toggleShuffle()
+{
+    shuffle = !shuffle;
+    if (shuffle && queue.size() > 1) {
+        std::shuffle(queue.begin(), queue.end(), randomSource());
         ++catalogRevision;
     }
 }

@@ -12,6 +12,8 @@ set(ASSET_HEADER "${CMAKE_CURRENT_BINARY_DIR}/design_assets.inc")
 set(NATIVE_ICONS
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/battery.svg"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/close.svg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/wifi.svg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/wifi-off.svg"
 )
 add_custom_command(
     OUTPUT "${ASSET_HEADER}"
@@ -22,6 +24,7 @@ add_custom_command(
 
 add_executable(DeckDS MACOSX_BUNDLE
     src/main.cpp src/studio.cpp src/player.cpp src/draw.cpp src/stage.cpp src/deck_ui.cpp src/preview_state.cpp
+    src/bluetooth.cpp
     "${ASSET_HEADER}"
 )
 target_compile_features(DeckDS PRIVATE cxx_std_20)
@@ -36,9 +39,24 @@ set_target_properties(DeckDS PROPERTIES
 
 file(GLOB DECK_FONTS CONFIGURE_DEPENDS "${DESIGN}/fonts/*.ttf" "${DESIGN}/fonts/*.txt")
 if(APPLE)
+    enable_language(OBJCXX)
+    find_library(COREWLAN_FRAMEWORK CoreWLAN REQUIRED)
+    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
     set_source_files_properties(${DECK_FONTS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/fonts)
-    target_sources(DeckDS PRIVATE ${DECK_FONTS})
+    target_sources(DeckDS PRIVATE src/wifi_macos.mm ${DECK_FONTS})
+    target_link_libraries(DeckDS PRIVATE "${COREWLAN_FRAMEWORK}" "${FOUNDATION_FRAMEWORK}")
 else()
+    target_sources(DeckDS PRIVATE src/wifi.cpp)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0)
+            if(GIO_FOUND)
+                target_link_libraries(DeckDS PRIVATE PkgConfig::GIO)
+                target_compile_definitions(DeckDS PRIVATE DECKDS_BLUEZ)
+            endif()
+        endif()
+    endif()
     foreach(font IN LISTS DECK_FONTS)
         get_filename_component(name "${font}" NAME)
         configure_file("${font}" "${CMAKE_CURRENT_BINARY_DIR}/fonts/${name}" COPYONLY)
