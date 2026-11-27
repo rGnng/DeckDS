@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <numbers>
 #include <numeric>
 #include <random>
 
@@ -54,7 +55,7 @@ constexpr float railThumbCenterInset = 34.f;
 constexpr int keyColumns = 10;
 constexpr Uint64 backHoldMs = 500;
 constexpr float queueLabelHold = .500f;
-constexpr float queueLabelFade = .120f;
+constexpr float queueLabelFlip = .120f;
 constexpr float stageFadeSeconds = .060f;
 constexpr float progressPhaseSeconds = .080f;
 constexpr float stageCenteringSeconds = .050f;
@@ -285,7 +286,7 @@ void DeckUi::update(double dt)
     stageTime = std::min(1.f, stageTime + step / stageFadeSeconds);
     tabTime = std::min(1.f, tabTime + step / .22f);
     if (tab == Tab::Queue)
-        queueLabelTime = std::min(queueLabelHold + queueLabelFade, queueLabelTime + step);
+        queueLabelTime = std::min(queueLabelHold + queueLabelFlip, queueLabelTime + step);
     const int visualTab = tabSliding ? slideTab : static_cast<int>(tab);
     for (int i = 0; i < 6; ++i)
         tabWidths[i] = std::lerp(tabStart[i], i == visualTab ? 260.f : 108.f, smooth(tabTime));
@@ -584,25 +585,31 @@ void DeckUi::tabs(Draw& d)
             const float nameW = std::min(d.textWidth(tabLabel, Size::Sub, Face::Display, true), vr.w - 60);
             const bool showText = vr.w >= 170;
             const bool queueTab = i == static_cast<int>(Tab::Queue) && tab == Tab::Queue;
-            const float countFade = queueTab ? smooth((queueLabelTime - queueLabelHold) / queueLabelFade) : 0.f;
+            const float flip = queueTab ? std::clamp((queueLabelTime - queueLabelHold) / queueLabelFlip, 0.f, 1.f) : 0.f;
+            const bool showCount = flip >= .5f;
             std::string remaining;
             float countW = nameW;
-            if (countFade > 0.f) {
+            if (flip > 0.f) {
                 remaining = std::to_string(player.queue.size());
                 countW = std::min(d.textWidth(remaining, Size::Sub, Face::Display, true), vr.w - 60);
             }
-            const float textW = std::lerp(nameW, countW, countFade);
+            const float textW = std::lerp(nameW, countW, smooth(flip));
             const float ix = vr.x + even((vr.w - (showText ? iconSize + iconGap + textW : iconSize)) / 2);
             d.icon(tabIcons[i], {ix, vr.y + (vr.h - iconSize) / 2, iconSize, iconSize}, p.accent);
             if (showText) {
                 const float fade = std::clamp((vr.w - 170.f) / 70.f, 0.f, 1.f);
                 const float textX = ix + iconSize + iconGap;
-                if (countFade < 1.f)
-                    d.label(tabLabel, {textX, vr.y, nameW + 4, vr.h}, Size::Sub,
-                            alpha(p.text, fade * (1.f - countFade)), Face::Display, Align::Left, true);
-                if (countFade > 0.f)
-                    d.label(remaining, {textX, vr.y, countW + 4, vr.h}, Size::Sub,
-                            alpha(p.text, fade * countFade), Face::Display, Align::Left, true);
+                float y = vr.y;
+                float verticalScale = 1.f;
+                if (flip > 0.f && flip < 1.f) {
+                    const float angle = flip * std::numbers::pi_v<float>;
+                    // The old face rotates up and the new face rises from below.
+                    y += (showCount ? 8.f : -8.f) * std::sin(angle);
+                    verticalScale = std::abs(std::cos(angle));
+                }
+                const std::string_view label = showCount ? std::string_view(remaining) : tabLabel;
+                d.label(label, {textX, y, (showCount ? countW : nameW) + 4, vr.h}, Size::Sub,
+                        alpha(p.text, fade), Face::Display, Align::Left, true, false, 0, -1.f, verticalScale);
             }
         } else {
             if (amount > .01f)

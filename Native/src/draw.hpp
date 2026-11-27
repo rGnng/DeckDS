@@ -64,7 +64,7 @@ public:
     void unclip();
     void label(std::string_view text, Rect r, Size size, Color ink, Face type = Face::Display,
                Align align = Align::Left, bool strong = false, bool fadeOverflow = false, int weight = 0,
-               float marqueeTime = -1.f);
+               float marqueeTime = -1.f, float verticalScale = 1.f);
     float textWidth(std::string_view text, Size size, Face type = Face::Display, bool strong = false);
     std::vector<std::string> wrapText(std::string_view text, float width, Size size, Face type, bool strong);
     // A zero pixel size uses the SVG at the requested rectangle in every theme.

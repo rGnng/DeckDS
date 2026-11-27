@@ -516,9 +516,9 @@ bool Draw::appendTextTile(TextImage& image, TTF_Font* face, std::string_view rem
 }
 
 void Draw::label(std::string_view text, Rect r, Size size, Color ink, Face type, Align align, bool strong, bool fade,
-                 int weight, float marqueeTime)
+                 int weight, float marqueeTime, float verticalScale)
 {
-    if (text.empty() || r.w <= 0 || r.h <= 0)
+    if (text.empty() || r.w <= 0 || r.h <= 0 || verticalScale <= 0)
         return;
     if (!weight)
         weight = strong ? 700 : 400;
@@ -577,13 +577,14 @@ void Draw::label(std::string_view text, Rect r, Size size, Color ink, Face type,
             continue;
         auto* texture = tile.texture.get();
         SDL_SetTextureColorMod(texture, ink.r, ink.g, ink.b);
-        const float y = r.y + even((r.h - tile.h) / 2);
+        const float height = tile.h * verticalScale;
+        const float y = r.y + even((r.h - tile.h) / 2) + (tile.h - height) / 2;
         const auto part = [&](float from, float to, Uint8 opacity) {
             const float left = std::max(from, tileLeft), right = std::min(to, tileRight);
             if (right <= left)
                 return;
             const Rect source{left - tileLeft, 0, right - left, tile.h};
-            const Rect target{x + left, y, right - left, tile.h};
+            const Rect target{x + left, y, right - left, height};
             SDL_SetTextureAlphaMod(texture, opacity);
             SDL_RenderTexture(renderer, texture, &source, &target);
         };
