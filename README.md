@@ -1,6 +1,6 @@
-# DeckDS
+# <img src="Design/deckds-logo.svg" width="280" alt="DeckDS">
 
-**DeckDS** is a dedicated native dual-screen Hi-Fi music player designed for the **ANBERNIC RG DS Plus** (dual 4.3" `1024 × 768` IPS displays, RK3568, 64-bit Linux).
+**DeckDS** is a native dual-screen music player for the **ANBERNIC RG DS Plus** (dual 4.3" `1024 × 768` IPS displays, RK3568, 64-bit Linux).
 
 - [`Design/`](Design/) contains the interactive browser reference and the [native handoff](Design/DESIGN.md).
 - [`Native/`](Native/) contains the SDL3 implementation and desktop preview.
