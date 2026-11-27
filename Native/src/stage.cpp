@@ -114,10 +114,11 @@ void vu(Draw& d, float x, float level, float held, std::string_view channel)
     const float angle = std::lerp(start, end, level);
     const float xx = cx + std::cos(angle) * (radius + 8);
     const float yy = cy + std::sin(angle) * (radius + 8);
+    // The needle and its shadow end at the same lower edge as the pivot shield.
+    d.clip({x + 2, r.y + 2, r.w - 4, cy - r.y - 2});
     d.line(cx + 4, cy + 4, xx + 4, yy + 4, color(0x000000, 71), 6);
     d.line(cx, cy, xx, yy, p.accent, 5);
     d.circle(xx, yy, 2.5f, p.accent);
-    d.clip({x + 2, r.y + 2, r.w - 4, cy - r.y - 2});
     d.circle(cx, cy, 40, ceramic ? color(0x2c2720) : color(0x18191d));
     arc(d, cx, cy, 40, pi, 2 * pi, color(0xffffff, ceramic ? 46 : 31), 2);
     d.unclip();
@@ -328,9 +329,9 @@ void drawTopChrome(Draw& d, const Player& player, float dockTitle, std::string_v
     const float filled = even((rail.w - 4) * player.progress());
     if (d.vfd()) {
         for (float x = 0; x < rail.w - 4; x += 8)
-            d.rect({rail.x + 2 + x, rail.y + 2, 6, 8}, x < filled ? p.accent : p.wave);
+            d.rect({rail.x + 2 + x, rail.y + 2, 6, 8}, x < filled ? p.dim : p.wave);
     } else {
-        d.round({rail.x + 2, rail.y + 2, filled, 8}, 4, p.accent);
+        d.round({rail.x + 2, rail.y + 2, filled, 8}, 4, p.dim);
     }
 }
 
@@ -345,24 +346,42 @@ void drawWaveform(Draw& d, const Player& player, Rect area, float reveal)
     const float center = r.y + r.h / 2;
     const auto* track = player.track();
     const auto wave = waveform(track);
-    const float progress = player.progress();
+    const float played = r.w * player.progress();
+    const float progressX = r.x + played;
+    constexpr float playheadWidth = 5.f;
+    const float playhead = std::clamp(progressX - playheadWidth / 2, r.x, r.x + r.w - playheadWidth);
+    const auto paintPlayed = [&](const auto& paint) {
+        if (played < 1.f)
+            return;
+        d.clip({r.x, r.y, played, r.h});
+        paint(p.dim, progressX);
+        d.unclip();
+    };
     if (d.vfd()) {
         const int columns = static_cast<int>(r.w / 8), rows = static_cast<int>(r.h / 8);
         const int firstRow = std::min((rows - 1) / 2, static_cast<int>(std::ceil((1 - reveal) * rows / 2)));
         const float middle = (rows - 1) / 2.f;
-        const int cursor = std::min(columns - 1, static_cast<int>(progress * columns));
-        for (int column = 0; column < columns; ++column) {
-            const int source = column * static_cast<int>(wave.size()) / columns;
-            const float span = std::max(1.f, std::round(wave[source] * rows * .46f));
-            for (int row = firstRow; row < rows - firstRow; ++row) {
-                const float distance = std::abs(row - middle);
-                Color dot = mix(p.bg, p.wave, .45f);
-                if (track) {
-                    if (column == cursor) dot = p.danger;
-                    else if (distance <= span)
-                        dot = column < cursor ? (distance > rows * .34f ? p.danger : p.accent) : mix(p.wave, p.muted, .45f);
+        const Color background = mix(p.bg, p.wave, .45f);
+        for (int row = firstRow; row < rows - firstRow; ++row)
+            for (int column = 0; column < columns; ++column)
+                d.rect({r.x + column * 8 + 1, r.y + row * 8 + 1, 6, 6}, background);
+        if (track) {
+            const auto paint = [&](Color ink, float right) {
+                for (int column = 0; column < columns; ++column) {
+                    const float x = r.x + column * 8 + 1;
+                    if (x >= right)
+                        break;
+                    const int source = column * static_cast<int>(wave.size()) / columns;
+                    const float span = std::max(1.f, std::round(wave[source] * rows * .46f));
+                    for (int row = firstRow; row < rows - firstRow; ++row)
+                        if (std::abs(row - middle) <= span)
+                            d.rect({x, r.y + row * 8 + 1, 6, 6}, ink);
                 }
-                d.rect({r.x + column * 8 + 1, r.y + row * 8 + 1, 6, 6}, dot);
+            };
+            paint(mix(p.wave, p.muted, .45f), r.x + r.w);
+            paintPlayed(paint);
+            for (int row = firstRow; row < rows - firstRow; ++row) {
+                d.rect({playhead, r.y + row * 8 + 1, playheadWidth, 6}, p.text);
             }
         }
         return;
@@ -374,12 +393,17 @@ void drawWaveform(Draw& d, const Player& player, Rect area, float reveal)
 
     constexpr int bars = 80;
     const float pitch = r.w / bars;
-    for (int i = 0; i < bars; ++i) {
-        const float amplitude = std::max(12.f, wave[i * 2] * (r.h - 20)) * reveal;
-        d.round({r.x + 2 + i * pitch, center - amplitude / 2, std::max(5.f, pitch - 4), amplitude},
-                3, i / 80.f <= progress ? p.accent : p.wave);
-    }
-    const float playhead = std::clamp(r.x + r.w * progress - 2.5f, r.x, r.x + r.w - 5);
+    const auto paint = [&](Color ink, float right) {
+        for (int i = 0; i < bars; ++i) {
+            const float x = r.x + 2 + i * pitch;
+            if (x >= right)
+                break;
+            const float amplitude = std::max(12.f, wave[i * 2] * (r.h - 20)) * reveal;
+            d.round({x, center - amplitude / 2, std::max(5.f, pitch - 4), amplitude}, 3, ink);
+        }
+    };
+    paint(p.wave, r.x + r.w);
+    paintPlayed(paint);
     const float playheadH = (r.h - 8) * reveal;
-    d.rect({playhead, center - playheadH / 2, 5, playheadH}, p.text);
+    d.rect({playhead, center - playheadH / 2, playheadWidth, playheadH}, p.text);
 }

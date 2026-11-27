@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 namespace {
@@ -171,14 +172,14 @@ SDL_Keycode controllerKey(SDL_Gamepad* pad, Uint8 button)
     }
 }
 
-std::filesystem::path clockSettingsPath()
+std::filesystem::path previewSettingsPath(bool longMetadata)
 {
     const std::unique_ptr<char, decltype(&SDL_free)> directory(SDL_GetPrefPath("DeckDS", "DeckDS"), SDL_free);
     if (!directory) {
         SDL_Log("Cannot find the settings directory: %s", SDL_GetError());
         return {};
     }
-    return std::filesystem::path(directory.get()) / "clock.conf";
+    return std::filesystem::path(directory.get()) / (longMetadata ? "preview-long-metadata.conf" : "preview.conf");
 }
 
 void loadClockSettings(const std::filesystem::path& path, DeckUi& app)
@@ -194,24 +195,24 @@ void loadClockSettings(const std::filesystem::path& path, DeckUi& app)
     }
 }
 
-void saveClockSettings(const std::filesystem::path& path, const DeckUi& app)
+bool savePreviewSettings(const std::filesystem::path& path, std::string_view settings)
 {
     auto temporary = path;
     temporary += "." + std::to_string(SDL_rand_bits()) + ".tmp";
-    const auto settings = std::string(app.clock24h ? "24 " : "12 ") + std::to_string(app.clockOffsetMinutes) + '\n';
     std::error_code error;
     if (SDL_SaveFile(temporary.string().c_str(), settings.data(), settings.size())) {
         std::filesystem::rename(temporary, path, error);
         if (!error)
-            return;
-        SDL_Log("Cannot replace clock settings: %s", error.message().c_str());
+            return true;
+        SDL_Log("Cannot replace preview settings: %s", error.message().c_str());
     } else {
-        SDL_Log("Cannot write clock settings: %s", SDL_GetError());
+        SDL_Log("Cannot write preview settings: %s", SDL_GetError());
     }
     std::filesystem::remove(temporary, error);
+    return false;
 }
 
-int run(bool separate, bool kiosk)
+int run(bool separate, bool kiosk, bool longMetadata)
 {
     const char* base = SDL_GetBasePath();
     if (!base) {
@@ -220,10 +221,25 @@ int run(bool separate, bool kiosk)
     }
     const auto fonts = std::filesystem::path(base) / "fonts";
     DeckUi app;
-    const auto clockPath = clockSettingsPath();
-    if (!clockPath.empty())
-        loadClockSettings(clockPath, app);
-    auto clockSettings = std::pair{app.clock24h, app.clockOffsetMinutes};
+    if (longMetadata)
+        app.useLongMetadataFixture();
+    const auto settingsPath = previewSettingsPath(longMetadata);
+    if (!settingsPath.empty()) {
+        std::ifstream settings(settingsPath);
+        if (!app.loadPreview(settings) && !longMetadata)
+            loadClockSettings(settingsPath.parent_path() / "clock.conf", app);
+    }
+    const auto previewState = [&] {
+        std::ostringstream settings;
+        app.savePreview(settings);
+        return std::move(settings).str();
+    };
+    auto savedSettings = previewState();
+    const auto saveChangedSettings = [&] {
+        auto current = previewState();
+        if (current != savedSettings && savePreviewSettings(settingsPath, current))
+            savedSettings = std::move(current);
+    };
     std::vector<std::unique_ptr<Window>> windows;
     const SDL_DisplayID primary = SDL_GetPrimaryDisplay();
     if (separate) {
@@ -278,6 +294,8 @@ int run(bool separate, bool kiosk)
     bool triggerLeft = false, triggerRight = false;
     Uint64 tick = SDL_GetTicksNS();
     Uint64 nextBatteryPoll = 0;
+    constexpr Uint64 saveInterval = 3'000'000'000ULL;
+    Uint64 nextSettingsSave = tick + saveInterval;
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -375,11 +393,6 @@ int run(bool separate, bool kiosk)
                 break;
             }
         }
-        const auto currentClockSettings = std::pair{app.clock24h, app.clockOffsetMinutes};
-        if (!clockPath.empty() && currentClockSettings != clockSettings) {
-            saveClockSettings(clockPath, app);
-            clockSettings = currentClockSettings;
-        }
         if (app.textInput() != enteringText) {
             enteringText = app.textInput();
             if (enteringText) SDL_StartTextInput(textWindow);
@@ -400,6 +413,10 @@ int run(bool separate, bool kiosk)
             nextBatteryPoll = now + 30'000'000'000ULL;
         }
         app.update(dt);
+        if (!settingsPath.empty() && now >= nextSettingsSave) {
+            saveChangedSettings();
+            nextSettingsSave = now + saveInterval;
+        }
         for (const auto& window : windows) {
             if (window->kind == Window::Pane::Both)
                 window->studio.update(app, dt);
@@ -407,13 +424,16 @@ int run(bool separate, bool kiosk)
         }
     }
 
+    if (!settingsPath.empty())
+        saveChangedSettings();
+
     for (const auto& [id, gamepad] : gamepads) {
         (void)id;
         SDL_CloseGamepad(gamepad);
     }
     return 0;
 }
-int dumpViews(const std::filesystem::path& outDir)
+int dumpViews(const std::filesystem::path& outDir, bool longMetadata)
 {
     const char* base = SDL_GetBasePath();
     if (!base)
@@ -436,13 +456,20 @@ int dumpViews(const std::filesystem::path& outDir)
     {
         Draw draw(ren, std::filesystem::path(base) / "fonts");
         DeckUi ui;
-        const char* names[15] = {
+        const char* names[] = {
             "00_deck_jp", "01_albums_minus1_play", "02_albums_search_osk", "03_songs_star_nodate",
             "04_songs_bottom_scroll", "05_order_songs", "06_artist_detail", "07_playlist_detail",
             "08_playlist_picker", "09_settings_accents_sfx", "10_vfd_amber_vu_jp", "11_ceramic_cobalt_info",
-            "12_settings_lang_clock_12h", "13_settings_japanese_ui", "14_order_songs_japanese_ui"
+            "12_settings_lang_clock_12h", "13_settings_japanese_ui", "14_order_songs_japanese_ui",
+            "15_long_deck", "16_long_albums_grid", "17_long_albums_list", "18_long_album_detail",
+            "19_long_artists", "20_long_artist_detail", "21_long_songs", "22_long_playlist_detail",
+            "23_long_queue", "24_long_context", "25_long_info", "26_long_vfd_spectrum"
         };
-        for (int i = 0; i < 15; ++i) {
+        constexpr int firstLongView = 15;
+        if (longMetadata)
+            ui.useLongMetadataFixture();
+        const int end = longMetadata ? static_cast<int>(std::size(names)) : firstLongView;
+        for (int i = longMetadata ? firstLongView : 0; i < end; ++i) {
             ui.configureSnapshot(i);
             SDL_SetRenderTarget(ren, topTex);
             ui.upper(draw, fadeTex);
@@ -468,15 +495,16 @@ int dumpViews(const std::filesystem::path& outDir)
 
 int main(int argc, char** argv)
 {
-    bool separate = false, kiosk = false;
+    bool separate = false, kiosk = false, longMetadata = false;
     std::filesystem::path dumpDir;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         if (arg == "--panels") separate = true;
         else if (arg == "--kiosk") kiosk = separate = true;
+        else if (arg == "--long-metadata") longMetadata = true;
         else if (arg == "--dump-views" && i + 1 < argc) dumpDir = argv[++i];
         else {
-            std::cout << "Usage: DeckDS [--panels | --kiosk | --dump-views <dir>]\n";
+            std::cout << "Usage: DeckDS [--panels | --kiosk | --dump-views <dir>] [--long-metadata]\n";
             return arg == "--help" ? 0 : 2;
         }
     }
@@ -494,7 +522,7 @@ int main(int argc, char** argv)
         SDL_Quit();
         return 1;
     }
-    const int result = dumpDir.empty() ? run(separate, kiosk) : dumpViews(dumpDir);
+    const int result = dumpDir.empty() ? run(separate, kiosk, longMetadata) : dumpViews(dumpDir, longMetadata);
     TTF_Quit();
     SDL_Quit();
     return result;

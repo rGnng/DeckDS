@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <tuple>
 
 using Rect = SDL_FRect;
@@ -63,7 +64,8 @@ public:
     void clip(Rect r);
     void unclip();
     void label(std::string_view text, Rect r, Size size, Color ink, Face type = Face::Display,
-               Align align = Align::Left, bool strong = false, bool fadeOverflow = false, int weight = 0);
+               Align align = Align::Left, bool strong = false, bool fadeOverflow = false, int weight = 0,
+               float marqueeTime = -1.f);
     float textWidth(std::string_view text, Size size, Face type = Face::Display, bool strong = false);
     // A zero pixel size uses the SVG at the requested rectangle in every theme.
     void icon(std::string_view name, Rect target, Color tint, int pixelSize = 32);
@@ -72,8 +74,18 @@ public:
     void texture(SDL_Texture* texture, Rect target, float opacity = 1);
 
 private:
-    struct TextImage { SDL_Texture* texture; float w, h; Uint64 lastUsed = 0; };
+    struct TextTile {
+        std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)> texture;
+        float x, w, h;
+    };
+    struct TextImage {
+        std::vector<TextTile> tiles;
+        float width = 0;
+        size_t bytes = 0;
+        Uint64 lastUsed = 0;
+    };
     std::filesystem::path fontPath;
+    int maxLabelTextureWidth = 4096;
     std::map<std::tuple<Theme, Face, Size, int>, TTF_Font*> fonts;
     std::map<std::tuple<bool, Size>, TTF_Font*> fallbackFonts;
     std::map<std::tuple<Theme, Face, Size, int, std::string>, TextImage> labels;
@@ -81,6 +93,7 @@ private:
     Uint64 labelTick = 0;
     void paint(Color c);
     TTF_Font* font(Face type, Size size, int weight);
+    bool appendTextTile(TextImage& image, TTF_Font* font, std::string_view remaining);
     void artwork(const Track* track, Rect target);
     void roundedTexture(SDL_Texture* texture, Rect area, float corner);
     std::map<std::tuple<std::string_view, std::array<std::string_view, 3>, Theme, int, int>, SDL_Texture*> artCache;

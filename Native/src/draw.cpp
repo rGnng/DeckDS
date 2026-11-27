@@ -107,6 +107,10 @@ const Palette& colors(Theme theme, int accent)
 Draw::Draw(SDL_Renderer* target, std::filesystem::path directory)
     : renderer(target), fontPath(std::move(directory))
 {
+    const auto limit = SDL_GetNumberProperty(SDL_GetRendererProperties(renderer),
+                                             SDL_PROP_RENDERER_MAX_TEXTURE_SIZE_NUMBER, 0);
+    if (limit > 0 && limit < maxLabelTextureWidth)
+        maxLabelTextureWidth = static_cast<int>(limit);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 }
 
@@ -117,8 +121,6 @@ Draw::~Draw()
     for (auto* texture : vuDials)
         if (texture)
             SDL_DestroyTexture(texture);
-    for (auto [key, label] : labels)
-        SDL_DestroyTexture(label.texture);
     for (auto [key, texture] : icons)
         SDL_DestroyTexture(texture);
     for (auto [key, value] : fonts)
@@ -440,29 +442,52 @@ float Draw::textWidth(std::string_view text, Size size, Face type, bool strong)
     return static_cast<float>(width);
 }
 
-void Draw::label(std::string_view text, Rect r, Size size, Color ink, Face type, Align align, bool strong, bool fade, int weight)
+bool Draw::appendTextTile(TextImage& image, TTF_Font* face, std::string_view remaining)
+{
+    if (!face)
+        return false;
+    // Leave room for glyph overhang when the measured UTF-8 prefix is reshaped.
+    const int maxWidth = std::max(1, maxLabelTextureWidth - TTF_GetFontHeight(face));
+    size_t length = 0;
+    if (!TTF_MeasureString(face, remaining.data(), remaining.size(), maxWidth, nullptr, &length) || !length)
+        return false;
+    if (length < remaining.size()) {
+        // Use a nearby word boundary where possible so kerning is preserved within words.
+        const size_t space = remaining.rfind(' ', length - 1);
+        if (space != std::string_view::npos && length - space <= 32 && space > 0)
+            length = space + 1;
+    }
+    auto* surface = vfd() ? TTF_RenderText_Solid(face, remaining.data(), length, color(0xffffff))
+                          : TTF_RenderText_Blended(face, remaining.data(), length, color(0xffffff));
+    if (!surface)
+        return false;
+    auto* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    const float w = static_cast<float>(surface->w), h = static_cast<float>(surface->h);
+    SDL_DestroySurface(surface);
+    if (!texture)
+        return false;
+    SDL_SetTextureScaleMode(texture, vfd() ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
+    image.tiles.push_back({{texture, SDL_DestroyTexture}, image.width, w, h});
+    image.width += w;
+    image.bytes += length;
+    return true;
+}
+
+void Draw::label(std::string_view text, Rect r, Size size, Color ink, Face type, Align align, bool strong, bool fade,
+                 int weight, float marqueeTime)
 {
     if (text.empty() || r.w <= 0 || r.h <= 0)
         return;
     if (!weight)
         weight = strong ? 700 : 400;
     std::string renderedText = vfd() ? vfdSanitize(text) : std::string(text);
-    const auto key = std::tuple(theme, type, size, vfd() ? 400 : weight, renderedText);
+    auto key = std::tuple(theme, type, size, vfd() ? 400 : weight, renderedText);
     auto found = labels.find(key);
     if (found == labels.end()) {
-        auto* face = font(type, size, weight);
-        if (!face)
+        TextImage image;
+        if (!appendTextTile(image, font(type, size, weight), renderedText))
             return;
-        auto* surface = vfd() ? TTF_RenderText_Solid(face, renderedText.data(), renderedText.size(), color(0xffffff))
-                              : TTF_RenderText_Blended(face, renderedText.data(), renderedText.size(), color(0xffffff));
-        if (!surface)
-            return;
-        TextImage image{SDL_CreateTextureFromSurface(renderer, surface),
-                        static_cast<float>(surface->w), static_cast<float>(surface->h), ++labelTick};
-        SDL_DestroySurface(surface);
-        if (!image.texture)
-            return;
-        SDL_SetTextureScaleMode(image.texture, vfd() ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
+        image.lastUsed = ++labelTick;
         if (labels.size() >= 768) {
             std::vector<std::pair<Uint64, decltype(labels)::iterator>> entries;
             entries.reserve(labels.size());
@@ -471,37 +496,62 @@ void Draw::label(std::string_view text, Rect r, Size size, Color ink, Face type,
             const size_t evict = 256;
             std::nth_element(entries.begin(), entries.begin() + evict, entries.end(),
                              [](const auto& a, const auto& b) { return a.first < b.first; });
-            for (size_t i = 0; i < evict; ++i) {
-                SDL_DestroyTexture(entries[i].second->second.texture);
+            for (size_t i = 0; i < evict; ++i)
                 labels.erase(entries[i].second);
-            }
         }
-        found = labels.emplace(key, image).first;
+        found = labels.emplace(std::move(key), std::move(image)).first;
     } else {
         found->second.lastUsed = ++labelTick;
     }
 
-    const auto image = found->second;
-    SDL_SetTextureColorMod(image.texture, ink.r, ink.g, ink.b);
-    const float w = std::min(image.w, r.w);
-    const float h = image.h;
+    auto& image = found->second;
+    constexpr float startPause = .65f, endPause = 1.1f, speed = 96.f;
+    if (marqueeTime >= startPause && image.bytes < renderedText.size()) {
+        auto* face = font(type, size, weight);
+        while (image.bytes < renderedText.size()) {
+            if (!appendTextTile(image, face, std::string_view(renderedText).substr(image.bytes)))
+                break;
+        }
+    }
+
+    const float w = std::min(image.width, r.w);
+    const float overflow = image.width - w;
+    float offset = 0.f;
+    if (marqueeTime >= startPause && overflow > 0.f) {
+        const float phase = std::fmod(marqueeTime, startPause + overflow / speed + endPause);
+        offset = std::clamp((phase - startPause) * speed, 0.f, overflow);
+        if (vfd())
+            offset = std::min(even(offset), overflow);
+    }
     const float x = align == Align::Center ? r.x + even((r.w - w) / 2)
                   : align == Align::Right ? r.x + r.w - w : r.x;
-    const float y = r.y + even((r.h - h) / 2);
-    const float cut = fade && w < image.w ? std::max(0.f, w - 48) : w;
+    const float leading = fade && offset > 0.f ? std::min(48.f, w / 2) : 0.f;
+    const float trailing = fade && (offset < overflow || image.bytes < renderedText.size())
+                         ? std::max(leading, w - 48.f) : w;
 
-    const auto part = [&](float left, float width, Uint8 opacity) {
-        if (width <= 0)
-            return;
-        const Rect source{left, 0, width, h};
-        const Rect target{x + left, y, width, h};
-        SDL_SetTextureAlphaMod(image.texture, opacity);
-        SDL_RenderTexture(renderer, image.texture, &source, &target);
-    };
-    part(0, cut, ink.a);
-    for (float i = cut; i < w; i += 2)
-        part(i, std::min(2.f, w - i), static_cast<Uint8>(ink.a * (w - i) / 48));
-    SDL_SetTextureAlphaMod(image.texture, 255);
+    for (const auto& tile : image.tiles) {
+        const float tileLeft = tile.x - offset, tileRight = tileLeft + tile.w;
+        if (tileRight <= 0.f || tileLeft >= w)
+            continue;
+        auto* texture = tile.texture.get();
+        SDL_SetTextureColorMod(texture, ink.r, ink.g, ink.b);
+        const float y = r.y + even((r.h - tile.h) / 2);
+        const auto part = [&](float from, float to, Uint8 opacity) {
+            const float left = std::max(from, tileLeft), right = std::min(to, tileRight);
+            if (right <= left)
+                return;
+            const Rect source{left - tileLeft, 0, right - left, tile.h};
+            const Rect target{x + left, y, right - left, tile.h};
+            SDL_SetTextureAlphaMod(texture, opacity);
+            SDL_RenderTexture(renderer, texture, &source, &target);
+        };
+        for (float i = 0.f; i < leading; i += 2.f)
+            part(i, std::min(i + 2.f, leading), static_cast<Uint8>(ink.a * i / leading));
+        part(leading, trailing, ink.a);
+        for (float i = trailing; i < w; i += 2.f)
+            part(i, std::min(i + 2.f, w), static_cast<Uint8>(ink.a * (w - i) / 48.f));
+        SDL_SetTextureAlphaMod(texture, 255);
+    }
 }
 
 SDL_Texture* Draw::iconTexture(std::string_view name, int pixels)

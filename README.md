@@ -24,4 +24,8 @@ Click the lower panel to simulate touch. Use **Keys** for keyboard shortcuts or 
 
 Space starts the synthesized demo track. **C** (the RG DS Plus X button) cycles Cover, VU and Spectrum. **Q/E** change tabs, **Up** at the top of a library view reveals its toolbar, and **/** opens search and the touch keypad. The toolbar's library control switches between the web demo's 100- and 2,000-album catalogs. The SDL3 build has been exercised on macOS and desktop Linux. The two-panel kiosk mode and the handheld's display, input and appliance services still need RG DS Plus testing.
 
-On the Deck tab, **Tab** opens Settings. **Time Format** switches the top screen between 12-hour and 24-hour time. **Set Clock** adjusts the time DeckDS displays by hours or minutes, and **Sync** returns it to the computer's local time. DeckDS saves the format and adjustment across restarts.
+On the Deck tab, **Tab** opens Settings. **Time Format** switches the computer’s local time between 12-hour and 24-hour display on the top screen. **Language** is at the bottom of Settings.
+
+The SDL3 preview remembers display and audio settings, library layout and sorting, and the last tab across relaunches. It restores favorites, playlists, the queue, and the last track and position. Playback opens paused.
+
+Run with `--long-metadata` to preview a track with long English and Japanese names in a separate preview session. On macOS, use `open Native/build/DeckDS.app --args --long-metadata`. Add `--dump-views <dir>` to capture the long-name test views as PNGs.

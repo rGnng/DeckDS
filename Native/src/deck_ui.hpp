@@ -3,6 +3,7 @@
 #include "stage.hpp"
 
 #include <functional>
+#include <iosfwd>
 #include <optional>
 
 enum class PreviewScale { Fit, Integer, Studio, PixelOne, PixelTwo, Count };
@@ -40,6 +41,9 @@ public:
     void pointer(float x, float y, int phase);
     void wheel(float y);
     void cancelInput();
+    bool loadPreview(std::istream& settings);
+    void savePreview(std::ostream& settings) const;
+    void useLongMetadataFixture();
     void configureSnapshot(int preset);
 
 private:
@@ -71,6 +75,23 @@ private:
         std::string added;
         Rect box{};
         bool albumTrack = false;
+    };
+    struct RowKey {
+        explicit RowKey(const Row& row);
+        bool matches(const Row& row) const;
+
+        Tab source;
+        int track, playlist;
+        std::string title;
+    };
+    struct CatalogPosition {
+        float scroll = 0.f;
+        int selection = 0;
+        std::optional<RowKey> item;
+    };
+    struct Detail {
+        Row row;
+        CatalogPosition parent;
     };
     struct Option {
         std::string label, value;
@@ -115,11 +136,14 @@ private:
     float utilityAnim = 0, searchAnim = 0, keyboardHeight = 0;
     std::array<float, 2> catBtnAnim{};
     std::array<float, 3> detailBtnAnim{};
-    std::string query, playlistName, notice;
-    float noticeTime = 0;
+    std::string query, playlistName;
     int selection = 0, toolSelection = 2, keySelection = 0, sheetSelection = 0, clockBtnFocus = 1;
+    int marqueeRow = -1, touchSelectedTrack = -1;
+    std::string marqueeTitle;
+    float rowMarqueeTime = 0.f;
     int contextTrack = -1, contextPlaylist = -1;
-    std::vector<Row> details;
+    std::vector<Detail> details;
+    std::array<CatalogPosition, 6> rootPositions{};
     std::vector<Hit> hits;
     std::optional<Hit> pressed;
     Action lastAction = Action::None;
@@ -178,6 +202,10 @@ private:
     void activate(Action action, int data);
     void targetScroll(float target, bool animate = true);
     void targetSettingsScroll(float target, bool animate = true);
+    float expectedCatalogHeight() const;
+    CatalogPosition catalogPosition() const;
+    void rememberRootPosition();
+    void restoreCatalogPosition(const CatalogPosition& position, bool revealItem = false);
     void keepSelectedVisible();
     void keepSettingsVisible();
     void scrubRail(float y);
@@ -186,6 +214,7 @@ private:
     void openInput(Input field);
     void closeInput(bool confirm);
     void setTab(int index);
+    void settleTab();
     void selectRow(int index);
     void openContext(int index, int playlist = -1);
     void openAlbum(int index);
@@ -193,7 +222,6 @@ private:
     void cycleStage();
     void toggleLid();
     void power(bool down, bool repeated);
-    void flash(std::string message);
     void back();
     void libraryKey(SDL_Keycode key);
     void sheetKey(SDL_Keycode key);

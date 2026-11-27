@@ -21,7 +21,7 @@ add_custom_command(
 )
 
 add_executable(DeckDS MACOSX_BUNDLE
-    src/main.cpp src/studio.cpp src/player.cpp src/draw.cpp src/stage.cpp src/deck_ui.cpp
+    src/main.cpp src/studio.cpp src/player.cpp src/draw.cpp src/stage.cpp src/deck_ui.cpp src/preview_state.cpp
     "${ASSET_HEADER}"
 )
 target_compile_features(DeckDS PRIVATE cxx_std_20)
