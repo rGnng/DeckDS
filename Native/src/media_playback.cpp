@@ -151,7 +151,7 @@ struct MediaPlayback::Impl {
         uint64_t submitted = 0;
         bool started = false, eof = false, failed = false;
         std::optional<std::chrono::steady_clock::time_point> drained;
-        Snapshot next{Status::Loading, request.seconds, {}};
+        Snapshot next{Status::Loading, request.seconds, {}, {rate, device.freq, device.channels, deviceFrames}};
         std::array<float, 4096> block{};
 
         while (!request.cancel.stop_requested()) {

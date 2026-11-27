@@ -87,25 +87,25 @@ int positivePrefix(std::string_view value, int fallback = 0)
     return result.ec == std::errc{} && number > 0 ? number : fallback;
 }
 
-std::string utcDate(std::time_t time, const char* format)
+std::string modificationTime(std::filesystem::file_time_type stamp)
 {
+    const auto time = std::filesystem::file_time_type::clock::to_sys(stamp);
+    const auto seconds = std::chrono::floor<std::chrono::seconds>(time);
+    const auto epochSeconds = std::chrono::system_clock::to_time_t(seconds);
     std::tm utc{};
 #if defined(_WIN32)
-    if (gmtime_s(&utc, &time))
+    if (gmtime_s(&utc, &epochSeconds))
 #else
-    if (!gmtime_r(&time, &utc))
+    if (!gmtime_r(&epochSeconds, &utc))
 #endif
         return {};
-    char date[24]{};
-    std::strftime(date, sizeof(date), format, &utc);
+    char date[32]{};
+    const auto length = std::strftime(date, sizeof(date), "%Y-%m-%dT%H:%M:%S", &utc);
+    if (!length)
+        return {};
+    const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(time - seconds).count();
+    std::snprintf(date + length, sizeof(date) - length, ".%09lld", static_cast<long long>(nanos));
     return date;
-}
-
-std::string modifiedDate(std::filesystem::file_time_type stamp)
-{
-    const auto time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-        std::chrono::system_clock::now() + (stamp - std::filesystem::file_time_type::clock::now()));
-    return utcDate(std::chrono::system_clock::to_time_t(time), "%Y-%m-%d");
 }
 
 bool readMetadata(const std::filesystem::path& path, MediaFile& media, const std::stop_token& stop)
@@ -237,6 +237,7 @@ public:
 
     void exec(const char* sql) { checkSql(db.get(), sqlite3_exec(db.get(), sql, nullptr, nullptr, nullptr)); }
     Statement query(const char* sql) { return Statement(db.get(), sql); }
+    int changes() const { return sqlite3_changes(db.get()); }
 
     void begin(const std::stop_token& stop)
     {
@@ -267,7 +268,7 @@ public:
         )sql");
     }
 
-    std::optional<MediaLibrary> load(const std::filesystem::path& directory)
+    std::optional<MediaLibrary> load(const std::filesystem::path& directory, std::vector<size_t>* staleDates = nullptr)
     {
         auto root = query("SELECT root FROM music_folder WHERE singleton = 1;");
         if (!root.next() || root.text(0) != directory.string())
@@ -290,8 +291,6 @@ public:
             file.format = files.text(5);
             file.rate = files.text(6);
             file.bitrate = files.text(7);
-            file.modified = files.text(8);
-            file.added = files.text(9);
             file.disc = static_cast<int>(files.number(10));
             file.number = static_cast<int>(files.number(11));
             file.year = static_cast<int>(files.number(12));
@@ -300,6 +299,11 @@ public:
             file.bitDepth = static_cast<int>(files.number(15));
             file.bytes = static_cast<uintmax_t>(files.number(16));
             file.modificationStamp = files.number(17);
+            using FileTime = std::filesystem::file_time_type;
+            file.added = modificationTime(FileTime{FileTime::duration{file.modificationStamp}});
+            file.modified = file.added.substr(0, 10);
+            if (staleDates && (file.added != files.text(9) || file.modified != files.text(8)))
+                staleDates->push_back(library.files.size() - 1);
             file.lossless = files.number(18) != 0;
             file.missing = files.number(19) != 0;
             library.missing += file.missing;
@@ -342,18 +346,57 @@ std::optional<MediaLibrary> loadMusicIndex(const std::filesystem::path& director
     return schema.next() ? index.load(directory) : std::nullopt;
 }
 
-MediaLibrary scanMusic(const std::filesystem::path& directory, std::atomic<size_t>& scanned, std::stop_token stop,
+MediaLibrary scanMusic(const std::filesystem::path& directory, MediaScanProgress& progress, std::stop_token stop,
                        const std::filesystem::path& database)
 {
+    constexpr std::array<std::string_view, 13> extensions{
+        ".m4a", ".mp3", ".alac", ".aac", ".mp4", ".flac", ".wav", ".aif",
+        ".aiff", ".aifc", ".ogg", ".opus", ".wma",
+    };
+    std::vector<std::filesystem::directory_entry> candidates;
+    std::error_code walkError;
+    std::filesystem::recursive_directory_iterator it(directory, std::filesystem::directory_options::skip_permission_denied, walkError);
+    const std::filesystem::recursive_directory_iterator end;
+    for (; it != end && !stop.stop_requested(); it.increment(walkError)) {
+        if (walkError)
+            throw std::runtime_error(walkError.message());
+        const auto& entry = *it;
+        std::error_code error;
+        if (entry.symlink_status(error).type() != std::filesystem::file_type::regular)
+            continue;
+        const auto filename = entry.path().filename().string();
+        if (filename.starts_with('.') || std::ranges::find(extensions, lowercase(entry.path().extension().string())) == extensions.end())
+            continue;
+        candidates.push_back(entry);
+    }
+    if (stop.stop_requested())
+        return {};
+    if (walkError)
+        throw std::runtime_error(walkError.message());
+    progress.total.store(candidates.size(), std::memory_order_relaxed);
+
     MusicIndex index(database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
     index.begin(stop);
-    auto cached = index.load(directory);
+    std::vector<size_t> staleDates;
+    auto cached = index.load(directory, &staleDates);
     MediaLibrary result = cached ? std::move(*cached) : MediaLibrary{};
     if (!cached) {
         index.exec("DELETE FROM music_files;");
         auto root = index.query("INSERT OR REPLACE INTO music_folder(singleton, root) VALUES (1, ?);");
         root.bind(1, directory.string());
         root.write();
+    }
+    if (!staleDates.empty()) {
+        auto update = index.query("UPDATE music_files SET added = ?, modified = ? WHERE relative = ?;");
+        for (const auto i : staleDates) {
+            if (stop.stop_requested())
+                return {};
+            const auto& file = result.files[i];
+            update.bind(1, file.added);
+            update.bind(2, file.modified);
+            update.bind(3, std::filesystem::path(file.path).lexically_relative(directory).generic_string());
+            update.write();
+        }
     }
 
     std::unordered_map<std::string, size_t> known;
@@ -367,7 +410,7 @@ MediaLibrary scanMusic(const std::filesystem::path& directory, std::atomic<size_
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(relative) DO UPDATE SET
             title=excluded.title, artist=excluded.artist, album=excluded.album, album_artist=excluded.album_artist,
-            format=excluded.format, rate=excluded.rate, bitrate=excluded.bitrate, modified=excluded.modified,
+            format=excluded.format, rate=excluded.rate, bitrate=excluded.bitrate, modified=excluded.modified, added=excluded.added,
             disc=excluded.disc, number=excluded.number, year=excluded.year, duration=excluded.duration,
             channels=excluded.channels, bit_depth=excluded.bit_depth, bytes=excluded.bytes, mtime=excluded.mtime,
             lossless=excluded.lossless, missing=excluded.missing;
@@ -381,35 +424,20 @@ MediaLibrary scanMusic(const std::filesystem::path& directory, std::atomic<size_
         mark.bind(2, std::filesystem::path(file.path).lexically_relative(directory).generic_string());
         mark.write();
     };
-    constexpr std::array<std::string_view, 13> extensions{
-        ".m4a", ".mp3", ".alac", ".aac", ".mp4", ".flac", ".wav", ".aif",
-        ".aiff", ".aifc", ".ogg", ".opus", ".wma",
-    };
-    std::error_code walkError;
-    std::filesystem::recursive_directory_iterator it(directory, std::filesystem::directory_options::skip_permission_denied, walkError);
-    const std::filesystem::recursive_directory_iterator end;
-    const auto added = utcDate(std::time(nullptr), "%Y-%m-%dT%H:%M:%S");
-    for (; it != end && !stop.stop_requested(); it.increment(walkError)) {
-        if (walkError)
-            throw std::runtime_error(walkError.message());
-        const auto& entry = *it;
+    for (size_t processed = 0; processed < candidates.size() && !stop.stop_requested(); ++processed) {
+        progress.checked.store(processed, std::memory_order_release);
+        const auto& entry = candidates[processed];
         std::error_code error;
-        if (entry.symlink_status(error).type() != std::filesystem::file_type::regular)
+        const auto stamp = entry.last_write_time(error);
+        if (error) {
+            ++result.skipped;
             continue;
-        const auto filename = entry.path().filename().string();
-        if (filename.starts_with('.') || std::ranges::find(extensions, lowercase(entry.path().extension().string())) == extensions.end())
-            continue;
-        scanned.fetch_add(1, std::memory_order_relaxed);
+        }
         const auto old = known.find(entry.path().string());
         MediaFile* previous = nullptr;
         if (old != known.end()) {
             seen[old->second] = true;
             previous = &result.files[old->second];
-        }
-        const auto stamp = entry.last_write_time(error);
-        if (error) {
-            ++result.skipped;
-            continue;
         }
         const auto size = entry.file_size(error);
         if (error) {
@@ -431,9 +459,9 @@ MediaLibrary scanMusic(const std::filesystem::path& directory, std::atomic<size_
         const std::string relative = entry.path().lexically_relative(directory).generic_string();
         media.id = mediaKey(relative);
         media.bytes = size;
-        media.modified = modifiedDate(stamp);
         media.modificationStamp = ticks;
-        media.added = previous ? previous->added : added;
+        media.added = modificationTime(stamp);
+        media.modified = media.added.substr(0, 10);
         saveMediaFile(upsert, relative, media);
         if (previous)
             *previous = std::move(media);
@@ -442,21 +470,69 @@ MediaLibrary scanMusic(const std::filesystem::path& directory, std::atomic<size_
     }
     if (stop.stop_requested())
         return {};
-    if (walkError)
-        throw std::runtime_error(walkError.message());
+    progress.checked.store(candidates.size(), std::memory_order_release);
     for (size_t i = 0; i < seen.size() && !stop.stop_requested(); ++i) {
         if (seen[i])
             continue;
         std::error_code error;
         const auto status = std::filesystem::status(result.files[i].path, error);
-        if (status.type() == std::filesystem::file_type::not_found)
+        if (status.type() == std::filesystem::file_type::not_found) {
             markMissing(result.files[i], true);
+            result.missingPaths.push_back(std::filesystem::path(result.files[i].path).lexically_relative(directory).generic_string());
+        }
     }
     if (stop.stop_requested())
         return {};
     result.missing = std::ranges::count(result.files, true, &MediaFile::missing);
     index.exec("COMMIT;");
     return result;
+}
+
+std::vector<std::string> removeMissingMusic(const std::filesystem::path& directory, std::span<const std::string> paths,
+                                            std::stop_token stop, const std::filesystem::path& database)
+{
+    std::error_code error;
+    if (!std::filesystem::is_directory(directory, error))
+        throw std::runtime_error("Music folder is unavailable");
+    const auto stillMissing = [&](const std::string& path) {
+        return std::filesystem::status(directory / path, error).type() == std::filesystem::file_type::not_found;
+    };
+
+    std::vector<std::string> removed;
+    if (database.empty()) {
+        for (const auto& path : paths) {
+            if (stop.stop_requested())
+                return {};
+            if (stillMissing(path))
+                removed.push_back(mediaKey(path));
+        }
+        return removed;
+    }
+
+    MusicIndex index(database, SQLITE_OPEN_READWRITE);
+    index.begin(stop);
+    auto root = index.query("SELECT 1 FROM music_folder WHERE singleton = 1 AND root = ?;");
+    root.bind(1, directory.string());
+    if (!root.next())
+        throw std::runtime_error("The music folder has changed");
+
+    auto erase = index.query("DELETE FROM music_files WHERE relative = ? AND missing = 1;");
+    for (const auto& path : paths) {
+        if (stop.stop_requested())
+            return {};
+        if (!stillMissing(path))
+            continue;
+        erase.bind(1, path);
+        erase.write();
+        if (index.changes())
+            removed.push_back(mediaKey(path));
+    }
+    if (stop.stop_requested())
+        return {};
+    if (!std::filesystem::is_directory(directory, error))
+        throw std::runtime_error("Music folder is unavailable");
+    index.exec("COMMIT;");
+    return removed;
 }
 
 struct MediaDecoder::Impl {
@@ -611,7 +687,10 @@ int MediaDecoder::read(std::span<float> stereo)
 #else
 bool mediaSupported() { return false; }
 std::optional<MediaLibrary> loadMusicIndex(const std::filesystem::path&, const std::filesystem::path&) { return {}; }
-MediaLibrary scanMusic(const std::filesystem::path&, std::atomic<size_t>&, std::stop_token, const std::filesystem::path&) { return {}; }
+MediaLibrary scanMusic(const std::filesystem::path&, MediaScanProgress&, std::stop_token,
+                       const std::filesystem::path&) { return {}; }
+std::vector<std::string> removeMissingMusic(const std::filesystem::path&, std::span<const std::string>,
+                                            std::stop_token, const std::filesystem::path&) { return {}; }
 std::vector<uint8_t> readEmbeddedArtwork(std::string_view, size_t, std::stop_token) { return {}; }
 struct MediaDecoder::Impl {};
 MediaDecoder::MediaDecoder(std::string_view, double, int, std::stop_token) {}

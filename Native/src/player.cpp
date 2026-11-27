@@ -7,6 +7,7 @@
 #include <numbers>
 #include <random>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace {
 constexpr int sampleRate = 48000;
@@ -96,6 +97,47 @@ void Player::refreshMediaLibrary(MediaLibrary library)
     stars.resize(mediaFiles.size(), false);
     rebuildMediaTracks();
     ++catalogRevision;
+}
+
+std::vector<int> Player::removeMediaTracks(std::span<const std::string> ids)
+{
+    const std::unordered_set<std::string_view> removed(ids.begin(), ids.end());
+    std::vector<int> indices(mediaFiles.size(), -1);
+    std::vector<MediaFile> retained;
+    std::vector<bool> retainedStars;
+    retained.reserve(mediaFiles.size());
+    retainedStars.reserve(stars.size());
+    for (size_t i = 0; i < mediaFiles.size(); ++i) {
+        if (removed.contains(mediaFiles[i].id))
+            continue;
+        indices[i] = static_cast<int>(retained.size());
+        retained.push_back(std::move(mediaFiles[i]));
+        retainedStars.push_back(stars[i]);
+    }
+
+    const auto remap = [&](std::vector<int>& list) {
+        for (auto& index : list)
+            index = indices[index];
+        std::erase(list, -1);
+    };
+    remap(queue);
+    remap(history);
+    remap(played);
+    for (auto& playlist : playlists)
+        remap(playlist.tracks);
+    if (current >= 0) {
+        current = indices[current];
+        if (current < 0) {
+            stop();
+            currentStarted = false;
+        }
+    }
+
+    mediaFiles = std::move(retained);
+    stars = std::move(retainedStars);
+    rebuildMediaTracks();
+    ++catalogRevision;
+    return indices;
 }
 
 void Player::rebuildMediaTracks()
@@ -565,6 +607,21 @@ void Player::feedAudio()
             break;
         queued += chunkBytes;
     }
+}
+
+MediaPlayback::AudioFormat Player::audioFormat() const
+{
+    const auto* currentTrack = track();
+    if (!playing || !currentTrack)
+        return {};
+    if (!currentTrack->path.empty())
+        return currentMedia.format;
+    if (!output)
+        return {};
+    SDL_AudioSpec device{};
+    int deviceFrames = 0;
+    SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(output), &device, &deviceFrames);
+    return {sampleRate, device.freq, device.channels, deviceFrames};
 }
 
 std::string timecode(double seconds)

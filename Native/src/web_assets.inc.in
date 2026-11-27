@@ -1,0 +1,10 @@
+constexpr std::string_view indexHtml = R"deckds(@DECKDS_WEB_HTML@)deckds";
+constexpr unsigned char bootstrapBytes[] = {
+@DECKDS_WEB_BOOTSTRAP@
+};
+const std::string_view bootstrapCss{reinterpret_cast<const char*>(bootstrapBytes), sizeof(bootstrapBytes)};
+constexpr std::string_view pageStyle = R"deckds(@DECKDS_WEB_CSS@)deckds";
+constexpr std::string_view pageScript = R"deckds(@DECKDS_WEB_JS@)deckds";
+constexpr std::string_view debugHtml = R"deckds(@DECKDS_DEBUG_HTML@)deckds";
+constexpr std::string_view debugScript = R"deckds(@DECKDS_DEBUG_JS@)deckds";
+constexpr std::string_view logoSvg = R"deckds(@DECKDS_WEB_LOGO@)deckds";

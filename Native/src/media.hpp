@@ -22,14 +22,23 @@ struct MediaFile {
 
 struct MediaLibrary {
     std::vector<MediaFile> files;
+    std::vector<std::string> missingPaths;
     size_t skipped = 0, reused = 0, probed = 0, missing = 0;
+};
+
+enum class MusicScanMode { Quick, Full };
+
+struct MediaScanProgress {
+    std::atomic<size_t> checked{0}, total{0};
 };
 
 bool mediaSupported();
 std::string mediaKey(std::string_view value);
 std::optional<MediaLibrary> loadMusicIndex(const std::filesystem::path& directory, const std::filesystem::path& database);
-MediaLibrary scanMusic(const std::filesystem::path& directory, std::atomic<size_t>& scanned, std::stop_token stop,
+MediaLibrary scanMusic(const std::filesystem::path& directory, MediaScanProgress& progress, std::stop_token stop,
                        const std::filesystem::path& database = {});
+std::vector<std::string> removeMissingMusic(const std::filesystem::path& directory, std::span<const std::string> paths,
+                                            std::stop_token stop, const std::filesystem::path& database);
 
 using MediaWaveform = std::array<float, 160>;
 struct WaveformSource { std::string_view key, path; };

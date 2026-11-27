@@ -2,6 +2,7 @@
 
 #include "bluetooth.hpp"
 #include "stage.hpp"
+#include "web_config.hpp"
 
 #include <functional>
 #include <iosfwd>
@@ -12,6 +13,14 @@ enum class PreviewScale { Fit, Integer, Studio, PixelOne, PixelTwo, Count };
 class DeckUi {
 public:
     enum class Tab { Deck, Albums, Artists, Playlists, Songs, Queue };
+    struct MusicScan {
+        bool inBackground;
+        MusicScanMode mode;
+        size_t checked = 0, total = 0;
+        Uint64 started = SDL_GetTicks();
+
+        void draw(Draw& draw, Rect area, Size titleSize, Size percentSize) const;
+    };
     Theme theme = Theme::Obsidian;
     std::array<int, 3> themeAccents{0, 0, 0};
     bool clock24h = true;
@@ -19,7 +28,11 @@ public:
     int batteryPercent = 100;
     bool wifiConnected = false;
     std::string mediaStatus;
-    bool mediaScanning = false, musicFolderRequested = false;
+    std::optional<MusicScan> musicScan;
+    std::optional<MusicScanMode> musicRescanRequested;
+    std::optional<bool> musicMissingDecision;
+    bool musicFolderSelected = false, musicFolderRequested = false;
+    std::string webAddress, webError;
     Player player;
     bool lid = false;
     bool showKeys = false;
@@ -29,6 +42,7 @@ public:
     std::string clockString() const;
     bool textInput() const;
     bool displaysOff() const;
+    bool bluetoothConnected() const { return !bluetooth.connectedDevice().empty(); }
     std::string_view sleepMessage() const;
     float backlight() const;
     void update(double dt);
@@ -36,7 +50,7 @@ public:
     void lower(Draw& draw);
     void key(SDL_Keycode key, bool down, bool repeated = false, bool controller = false);
     void text(std::string_view value, bool physicalKeyboard = false);
-    void analog(float position);
+    void analog(float x, float y);
     void toggleLibrary();
     void pointer(float x, float y, int phase);
     void wheel(float y);
@@ -44,6 +58,17 @@ public:
     bool loadPreview(std::istream& settings);
     void savePreview(std::ostream& settings) const;
     void useMediaLibrary(MediaLibrary library);
+    bool musicRemovalPending() const { return missingFileCount != 0; }
+    bool canScanMusic() const { return musicFolderSelected && !musicScan && !musicRemovalPending(); }
+    size_t missingMusicFiles() const { return missingFileCount; }
+    uint64_t missingMusicReview() const { return missingReview; }
+    bool removingMusicFiles() const { return removingMissingFiles; }
+    void askRemoveMissingFiles(size_t count);
+    void answerMissingFiles(bool remove);
+    void dismissMissingFiles();
+    void removeMediaTracks(std::span<const std::string> ids);
+    WebSettings webSettings() const;
+    void setWebSetting(WebSetting setting, int value);
     void useLongMetadataFixture();
     void useBluetoothFixture();
     void configureSnapshot(int preset);
@@ -55,7 +80,7 @@ private:
         ListPlay, ListShuffle, Row, RowMenu, PlayNext, Back, Rail, SettingsRail, OutputRail, Option, Key,
         DetailQueue, Brightness, BluetoothUnpair
     };
-    enum class Sheet { None, Settings, Track, Info, Order, Output, Playlist };
+    enum class Sheet { None, Settings, Track, Info, Order, Output, Playlist, MissingFiles };
     enum class Input { None, Search, Playlist };
     enum class QueuePart { None, Played, Current, UpNext, EmptyUpNext };
     enum class SortField { Added, Name, Year, Artist, Album, AlbumCount, SongCount };
@@ -142,6 +167,11 @@ private:
     std::array<bool, 6> sortDirections{false, false, true, false, false, false};
 
     Sheet sheet = Sheet::None;
+    Sheet sheetBeforeMissingFiles = Sheet::None;
+    size_t missingFileCount = 0;
+    uint64_t missingReview = 0;
+    int selectionBeforeMissingFiles = 0, libraryScanFocus = 0;
+    bool removingMissingFiles = false;
     Input input = Input::None;
     bool symbols = false, utility = false, toolFocus = false, keypad = false;
     float utilityAnim = 0, searchAnim = 0, keyboardHeight = 0;
@@ -173,12 +203,12 @@ private:
     bool dragging = false, held = false, listPointer = false, settingsPointer = false, sheetListPointer = false;
     int seekDirection = 0;
     float seekHold = 0;
-    float analogPosition = 0;
+    float analogX = 0, analogY = 0;
     Rect listBox{}, settingsBox{12, 192, 924, 560}, sheetListBox{};
     float scroll = 0, scrollFrom = 0, scrollTarget = 0, scrollTime = 1, scrollLimit = 0;
     float settingsScroll = 0, settingsScrollFrom = 0, settingsScrollTarget = 0, settingsScrollTime = 1, settingsLimit = 0;
     float railPopup = 0;
-    int sheetListScroll = 0, sheetListLimit = 180;
+    float sheetListScroll = 0, sheetListLimit = 180;
     mutable std::vector<Row> cachedRows;
     mutable std::vector<LayoutHeader> cachedHeaders;
     mutable float cachedContentHeight = 0;
@@ -220,6 +250,7 @@ private:
     void activate(Action action, int data);
     void targetScroll(float target, bool animate = true);
     void targetSettingsScroll(float target, bool animate = true);
+    void scrollWithStick(float seconds);
     float expectedCatalogHeight() const;
     float catalogScrollLimit(float viewHeight, float keyboardPad = 0) const;
     CatalogPosition catalogPosition() const;

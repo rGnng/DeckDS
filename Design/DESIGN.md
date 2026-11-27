@@ -103,7 +103,7 @@ Obsidian and Ceramic use M PLUS 1p Regular as the antialiased Japanese fallback.
 | **`START`** | **Done** while the pop-up keypad is open. Otherwise Play / Pause (or **Shuffle All** when stopped & Up Next is empty). |
 | **Left Aux 1 (`STAR`)** | Global Star / Unstar current track. |
 | **Left Aux 2 (`NOW`)** | Smart Jump (`DECK` ↔ Current Track's Album Detail). |
-| **Analog Stick** | Scrub playback position on `DECK`. |
+| **Analog Stick** | Left/right scrubs playback position on `DECK`. Up/down scrolls lists faster as the stick tilts farther. |
 | **Hall Switch (`SW_LID`)** | **Pocket Audio:** cut both backlights to `0`, halt 60 fps UI loop, set CPU governor to `powersave`, keep ALSA playing + `L2/R2/START` active. **Pause:** pause & suspend. |
 | **`KEY_POWER`** | Short press: screen off / pocket audio (or sleep if stopped). Long press (~3 s): flush SQLite & graceful shutdown. |
 
@@ -216,6 +216,6 @@ Both previews use the SVG keycaps in the [icon sprite](index.html). The set incl
   - **OTA URL is empty by default** — zero phoning home and zero forced repo checks.
   - Users configure their preferred update endpoint (e.g., GitHub Releases API for `rGnng/DeckDS`, a personal fork, or a self-hosted LAN URL) strictly via **LAN Web Config** (or `/data/config.toml` — no URL typing on the handheld).
   - Supports SHA-256 verification, atomic A/B staging swap with rollback safety, and automatic `deckds` restart.
-- **LAN Debug, Config & Remote Web Control (Built-In Native HTTP/WS Server):**
-  - Lightweight native HTTP/WebSocket server exposed on a LAN port (e.g. `http://<device-ip>:8080`, toggleable in Settings) for external browsers on phone/PC (zero browser runs on the handheld).
-  - Provides live logs & telemetry (ALSA sample rate, DRM/evdev monitor, CPU/RAM/battery), OTA URL & binary upload, library rescan, Wi-Fi/BT/playlist editing, and full LAN remote playback control.
+- **LAN Debug, Config & Remote Web Control:**
+  - The native HTTP server listens on all IPv4 interfaces at port 8080 by default. Open `http://<device-ip>:8080` in a browser on a phone or computer.
+  - Web Config provides library scans and read-only SDL diagnostics at `/api/debug`. The device roadmap includes direct ALSA and DRM/evdev telemetry, OTA configuration, Wi-Fi and Bluetooth setup, playlist editing, and remote playback.

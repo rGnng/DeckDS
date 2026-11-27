@@ -48,6 +48,19 @@ open -n Native/build/DeckDS.app --args --music-path "/path/to/Music"
 Native/build/DeckDS --music-path "/path/to/Music"
 ```
 
-Use **Music Folder** in the preview’s left column to choose the single active library folder. DeckDS opens the last catalog from `library.sqlite` in its local preferences, then checks the folder in the background. It reads tags for new files and files whose size or modification time changed. Missing files stay in the index and are marked in Get Info. The source files are read-only, and each folder keeps its own saved playback position, queue, favorites, and playlists.
+Use **Music Folder** in the preview’s left column to choose the single active library folder. DeckDS opens the last catalog from `library.sqlite` in its local preferences, then checks the folder in the background. The source files are read-only, and each folder keeps its own saved playback position, queue, favorites, and playlists.
+
+Under **Deck Settings → Music Library**, **Quick Scan** and **Full Scan** read tags for new files and reuse indexed metadata when both file size and modification time match. The preview’s **Rescan** button runs a quick scan. If a scan finds missing files, **Keep** leaves them in the index and marks them in Get Info. **Remove** drops the missing entries from the index.
+The **Sync** control is reserved for a later update.
 
 DeckDS reads embedded album art and common folder covers on demand. The Deck waveform uses fixed-scale RMS and loads the previous track and first Up Next waveform in the background. Embedded covers and waveforms are cached alongside the library index.
+
+### Web Config
+
+Install `libmicrohttpd` with Homebrew on macOS or `libmicrohttpd-dev` on Debian or Ubuntu, then reconfigure and rebuild.
+
+Web Config starts with DeckDS and listens on all IPv4 interfaces at port 8080. Open `http://127.0.0.1:8080` on the same computer or use the IP address shown at the top of **Deck Settings** from another device. Access requires no password. DeckDS serves Bootstrap and all other browser assets locally.
+
+The browser shows the active library, scan progress, and Now Playing. Scans and missing-file decisions share the same state with the SDL3 app. Theme, brightness, clock format, SFX, and lid behavior apply live and use the preview’s existing settings file.
+
+**Debug** opens the live diagnostics page at `/debug`. `GET /api/debug` returns the versioned JSON snapshot and the latest 96 in-memory DeckDS log entries. Use it to inspect the SDL display and audio drivers, active audio rates, controller and touch devices, power, memory, and scan status.

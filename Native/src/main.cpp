@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <deque>
 #include <fstream>
 #include <future>
 #include <iterator>
@@ -14,10 +16,114 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/resource.h>
+#include <sys/utsname.h>
+#endif
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#endif
+
 namespace {
+std::string textOrEmpty(const char* text)
+{
+    return text ? text : "";
+}
+
+class DebugLog {
+public:
+    explicit DebugLog(bool enabled) : enabled(enabled)
+    {
+        if (enabled) {
+            SDL_GetLogOutputFunction(&previous, &userdata);
+            SDL_SetLogOutputFunction(record, this);
+        }
+    }
+
+    ~DebugLog()
+    {
+        if (enabled)
+            SDL_SetLogOutputFunction(previous, userdata);
+    }
+
+    std::vector<WebDebugState::Log> recent()
+    {
+        const std::lock_guard lock(mutex);
+        return {entries.begin(), entries.end()};
+    }
+
+private:
+    static void SDLCALL record(void* context, int category, SDL_LogPriority priority, const char* message)
+    {
+        auto& log = *static_cast<DebugLog*>(context);
+        {
+            const std::lock_guard lock(log.mutex);
+            constexpr size_t limit = 96;
+            if (log.entries.size() == limit)
+                log.entries.pop_front();
+            log.entries.push_back({SDL_GetTicks(), category, priority,
+                                   std::string(std::string_view(message).substr(0, 768))});
+        }
+        if (log.previous)
+            log.previous(log.userdata, category, priority, message);
+    }
+
+    bool enabled;
+    SDL_LogOutputFunction previous = nullptr;
+    void* userdata = nullptr;
+    std::mutex mutex;
+    std::deque<WebDebugState::Log> entries;
+};
+
+void collectSystemDebug(WebDebugState& state)
+{
+    state.platform = textOrEmpty(SDL_GetPlatform());
+    state.logicalCpus = SDL_GetNumLogicalCPUCores();
+    state.ramMiB = SDL_GetSystemRAM();
+#if defined(__APPLE__) || defined(__linux__)
+    utsname host{};
+    if (uname(&host) == 0) {
+        state.machine = host.machine;
+        state.kernel = host.release;
+    }
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) == 0)
+        state.peakRssBytes = usage.ru_maxrss;
+    double load = 0;
+    if (getloadavg(&load, 1) == 1)
+        state.loadAverage = load;
+#endif
+#if defined(__APPLE__)
+    char model[256]{};
+    size_t length = sizeof(model);
+    if (sysctlbyname("hw.model", model, &length, nullptr, 0) == 0)
+        state.model = model;
+#elif defined(__linux__)
+    state.peakRssBytes *= 1024;
+    std::ifstream model("/proc/device-tree/model");
+    char name[256]{};
+    model.getline(name, sizeof(name), '\0');
+    state.model = name;
+#endif
+}
+
+std::string_view debugPowerState(SDL_PowerState state)
+{
+    switch (state) {
+    case SDL_POWERSTATE_ON_BATTERY: return "onBattery";
+    case SDL_POWERSTATE_NO_BATTERY: return "noBattery";
+    case SDL_POWERSTATE_CHARGING: return "charging";
+    case SDL_POWERSTATE_CHARGED: return "charged";
+    case SDL_POWERSTATE_ERROR: return "error";
+    case SDL_POWERSTATE_UNKNOWN: return "unknown";
+    }
+    return "unknown";
+}
+
 class Window {
 public:
     enum class Pane { Both, Upper, Lower };
@@ -77,6 +183,15 @@ public:
     bool ready() const
     {
         return renderer && (kind == Pane::Lower || (top && fade)) && (kind == Pane::Upper || bottom);
+    }
+
+    WebDebugState::Window debugState() const
+    {
+        WebDebugState::Window result;
+        result.panel = kind == Pane::Both ? "both" : kind == Pane::Upper ? "upper" : "lower";
+        result.renderer = textOrEmpty(SDL_GetRendererName(renderer));
+        SDL_GetRenderOutputSize(renderer, &result.width, &result.height);
+        return result;
     }
 
     SDL_Window* window = nullptr;
@@ -255,7 +370,9 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
         return 1;
     }
     const auto fonts = std::filesystem::path(base) / "fonts";
+    DebugLog debugLog(WebConfig::supported());
     DeckUi app;
+    WebConfig web;
     if (longMetadata)
         app.useLongMetadataFixture();
     const auto preferences = previewPreferences();
@@ -274,11 +391,21 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
         if (!app.loadPreview(settings) && !longMetadata && musicPath.empty())
             loadClockSettings(settingsPath.parent_path() / "clock.conf", app);
     };
-    std::atomic<size_t> scanned{0};
+    MediaScanProgress scanProgress;
     std::future<MediaLibrary> musicScan;
+    std::future<std::vector<std::string>> missingCleanup;
+    std::vector<std::string> pendingMissingPaths;
+    std::string libraryMessage;
     std::jthread scanThread;
+    const auto startMusicJob = [&scanThread](auto work) {
+        using Result = std::invoke_result_t<decltype(work), std::stop_token>;
+        std::packaged_task<Result(std::stop_token)> task(std::move(work));
+        auto result = task.get_future();
+        scanThread = std::jthread(std::move(task));
+        return result;
+    };
     bool libraryReady = true;
-    const auto startMusicScan = [&](std::filesystem::path path, bool remember) {
+    const auto startMusicScan = [&](std::filesystem::path path, bool remember, MusicScanMode mode = MusicScanMode::Quick) {
         if (scanThread.joinable()) {
             scanThread.request_stop();
             scanThread.join();
@@ -288,6 +415,8 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
         const bool keepCurrent = libraryReady && app.player.hasMediaLibrary() && musicPath == root;
         musicPath = root;
         musicScan = {};
+        app.musicScan.reset();
+        app.musicFolderSelected = !musicPath.empty();
         if (!keepCurrent) {
             libraryReady = false;
             settingsPath = preferences.empty() ? std::filesystem::path{}
@@ -306,25 +435,22 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                 app.useMediaLibrary({});
         }
         app.mediaStatus.clear();
+        libraryMessage.clear();
         if (resolved.empty()) {
+            libraryMessage = "The music folder is unavailable.";
             if (!libraryReady)
                 app.mediaStatus = "Music folder is unavailable";
-            return;
+            return false;
         }
         if (remember && !folderFile.empty())
             savePreviewSettings(folderFile, musicPath.string());
-        if (!libraryReady)
-            app.mediaStatus = "Scanning music…";
-        scanned.store(0, std::memory_order_relaxed);
-        std::promise<MediaLibrary> result;
-        musicScan = result.get_future();
-        scanThread = std::jthread([&scanned, musicPath, database, result = std::move(result)](std::stop_token stop) mutable {
-            try {
-                result.set_value(scanMusic(musicPath, scanned, stop, database));
-            } catch (...) {
-                result.set_exception(std::current_exception());
-            }
+        app.musicScan = DeckUi::MusicScan{libraryReady, mode};
+        scanProgress.checked.store(0, std::memory_order_relaxed);
+        scanProgress.total.store(0, std::memory_order_relaxed);
+        musicScan = startMusicJob([&scanProgress, musicPath, database](std::stop_token stop) {
+            return scanMusic(musicPath, scanProgress, stop, database);
         });
+        return true;
     };
     if (!musicPath.empty()) {
         startMusicScan(musicPath, explicitMusicPath);
@@ -373,6 +499,15 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
             return 1;
         }
     auto* textWindow = windows.back()->window;
+    if (WebConfig::supported()) {
+        if (web.start()) {
+            app.webAddress = web.address();
+            SDL_Log("Web Config is listening on 0.0.0.0:8080");
+        } else {
+            app.webError = web.error();
+            SDL_Log("Web Config: %s", app.webError.c_str());
+        }
+    }
     const auto picker = std::make_shared<FolderPicker>();
     bool choosingMusicFolder = false;
     if (kiosk)
@@ -388,8 +523,10 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
     std::map<SDL_JoystickID, SDL_Gamepad*> gamepads;
     const auto openPad = [&](SDL_JoystickID id) {
         if (!gamepads.contains(id))
-            if (auto* pad = SDL_OpenGamepad(id))
+            if (auto* pad = SDL_OpenGamepad(id)) {
                 gamepads.emplace(id, pad);
+                SDL_Log("Gamepad connected: %s", textOrEmpty(SDL_GetGamepadName(pad)).c_str());
+            }
     };
     if (int count = 0; auto* ids = SDL_GetGamepads(&count)) {
         for (int i = 0; i < count; ++i)
@@ -404,6 +541,12 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
     Uint64 nextWifiPoll = 0;
     constexpr Uint64 saveInterval = 3'000'000'000ULL;
     Uint64 nextSettingsSave = tick + saveInterval;
+    Uint64 nextWebPublish = 0;
+    Uint64 nextDebugPublish = 0;
+    double frameMs = 0;
+    int batteryPercent = -1;
+    SDL_PowerState powerState = SDL_POWERSTATE_UNKNOWN;
+    std::optional<WebDebugState::ControllerEvent> lastControllerEvent;
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -434,6 +577,7 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                 break;
             case SDL_EVENT_GAMEPAD_REMOVED:
                 if (const auto found = gamepads.find(event.gdevice.which); found != gamepads.end()) {
+                    SDL_Log("Gamepad disconnected: %s", textOrEmpty(SDL_GetGamepadName(found->second)).c_str());
                     SDL_CloseGamepad(found->second);
                     gamepads.erase(found);
                 }
@@ -443,13 +587,21 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
             case SDL_EVENT_GAMEPAD_BUTTON_UP: {
                 const auto found = gamepads.find(event.gbutton.which);
                 SDL_Gamepad* pad = found != gamepads.end() ? found->second : nullptr;
+                const auto* button = SDL_GetGamepadStringForButton(static_cast<SDL_GamepadButton>(event.gbutton.button));
+                if (button)
+                    lastControllerEvent = WebDebugState::ControllerEvent{button, SDL_GetTicks(),
+                                                                         event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN};
                 if (const auto key = controllerKey(pad, event.gbutton.button); key != SDLK_UNKNOWN)
                     app.key(key, event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN, false, true);
                 break;
             }
             case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-                if (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX)
-                    app.analog(event.gaxis.value / 32768.f);
+                if (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
+                    if (const auto found = gamepads.find(event.gaxis.which); found != gamepads.end()) {
+                        app.analog(SDL_GetGamepadAxis(found->second, SDL_GAMEPAD_AXIS_LEFTX) / 32768.f,
+                                   SDL_GetGamepadAxis(found->second, SDL_GAMEPAD_AXIS_LEFTY) / 32768.f);
+                    }
+                }
                 if (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || event.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
                     auto& sticky = event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? triggerLeft : triggerRight;
                     const bool down = sticky ? event.gaxis.value > 12000 : event.gaxis.value > 18000;
@@ -512,19 +664,45 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
             SDL_DelayNS(frameTargetNs - (now - tick));
             now = SDL_GetTicksNS();
         }
-        const double dt = std::min((now - tick) / 1.e9, .1);
+        const double step = (now - tick) / 1.e9;
+        const double dt = std::min(step, .1);
+        frameMs = frameMs ? std::lerp(frameMs, step * 1000, .08) : step * 1000;
         tick = now;
         if (now >= nextBatteryPoll) {
-            int percent = -1;
-            const auto powerState = SDL_GetPowerInfo(nullptr, &percent);
-            app.batteryPercent = powerState == SDL_POWERSTATE_NO_BATTERY ? 100 : percent;
+            powerState = SDL_GetPowerInfo(nullptr, &batteryPercent);
+            app.batteryPercent = powerState == SDL_POWERSTATE_NO_BATTERY ? 100 : batteryPercent;
             nextBatteryPoll = now + 30'000'000'000ULL;
         }
         if (now >= nextWifiPoll) {
             app.wifiConnected = isWifiConnected();
+            if (web.running())
+                app.webAddress = web.address();
             nextWifiPoll = now + 3'000'000'000ULL;
         }
-        if (std::exchange(app.musicFolderRequested, false) && !choosingMusicFolder) {
+        bool scanFromWeb = false;
+        if (web.running()) {
+            using Type = WebConfigCommand::Type;
+            for (const auto& command : web.takeCommands()) {
+                switch (command.type) {
+                case Type::QuickScan:
+                case Type::FullScan:
+                    if (!app.musicRescanRequested && !choosingMusicFolder && app.canScanMusic()) {
+                        scanFromWeb = true;
+                        app.musicRescanRequested = command.type == Type::QuickScan ? MusicScanMode::Quick : MusicScanMode::Full;
+                    }
+                    break;
+                case Type::KeepMissing:
+                case Type::RemoveMissing:
+                    if (app.missingMusicReview() == command.review)
+                        app.answerMissingFiles(command.type == Type::RemoveMissing);
+                    break;
+                case Type::Setting:
+                    app.setWebSetting(command.setting, command.value);
+                    break;
+                }
+            }
+        }
+        if (std::exchange(app.musicFolderRequested, false) && !choosingMusicFolder && !app.musicRemovalPending()) {
             choosingMusicFolder = true;
             const auto location = availableMusicPath(musicPath);
             const auto initialFolder = location.string();
@@ -554,12 +732,49 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Music Folder", choice->error.c_str(), textWindow);
             }
         }
+        if (const auto mode = std::exchange(app.musicRescanRequested, std::nullopt);
+            mode && !choosingMusicFolder && app.canScanMusic()) {
+            if (!startMusicScan(musicPath, false, *mode) && !scanFromWeb)
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Music Library", "The music folder is unavailable.", textWindow);
+        }
+        if (const auto decision = std::exchange(app.musicMissingDecision, std::nullopt); decision) {
+            auto paths = std::exchange(pendingMissingPaths, {});
+            if (*decision) {
+                missingCleanup = startMusicJob([musicPath, database, paths = std::move(paths)](std::stop_token stop) {
+                    return removeMissingMusic(musicPath, paths, stop, database);
+                });
+            } else {
+                libraryMessage = "Missing entries kept.";
+            }
+        }
+        if (missingCleanup.valid() && missingCleanup.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            try {
+                const auto removed = missingCleanup.get();
+                if (!removed.empty()) {
+                    app.removeMediaTracks(removed);
+                    if (!settingsPath.empty())
+                        saveChangedSettings();
+                }
+                SDL_Log("Removed %zu missing files from the music index", removed.size());
+                libraryMessage = removed.empty() ? "The missing entries are back in the library."
+                    : "Removed " + std::to_string(removed.size()) + (removed.size() == 1 ? " entry." : " entries.");
+            } catch (const std::exception& error) {
+                SDL_Log("Unable to remove missing files: %s", error.what());
+                libraryMessage = "Unable to remove missing entries.";
+                if (!web.running())
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Music Library", error.what(), textWindow);
+            }
+            app.dismissMissingFiles();
+        }
         if (musicScan.valid()) {
-            if (musicScan.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            if (!choosingMusicFolder && musicScan.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                app.musicScan.reset();
                 try {
                     auto library = musicScan.get();
                     SDL_Log("Music library indexed %zu tracks (%zu probed, %zu cached, %zu skipped, %zu missing)",
                             library.files.size(), library.probed, library.reused, library.skipped, library.missing);
+                    auto missing = std::move(library.missingPaths);
+                    libraryMessage = library.files.empty() ? "No playable music files found." : "Scan complete.";
                     if (libraryReady) {
                         app.player.refreshMediaLibrary(std::move(library));
                     } else if (library.files.empty()) {
@@ -571,20 +786,102 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                         savedSettings = previewState();
                         libraryReady = true;
                     }
+                    if (!missing.empty()) {
+                        libraryMessage.clear();
+                        pendingMissingPaths = std::move(missing);
+                        app.askRemoveMissingFiles(pendingMissingPaths.size());
+                    }
                 } catch (const std::exception& error) {
                     SDL_Log("Music library scan failed: %s", error.what());
+                    libraryMessage = "Unable to scan the music folder.";
                     if (!libraryReady)
                         app.mediaStatus = "Unable to scan the music folder";
                 }
-            } else if (!libraryReady) {
-                app.mediaStatus = "Scanning music… " + std::to_string(scanned.load(std::memory_order_relaxed));
+            } else {
+                app.musicScan->checked = scanProgress.checked.load(std::memory_order_acquire);
+                app.musicScan->total = scanProgress.total.load(std::memory_order_relaxed);
             }
         }
-        app.mediaScanning = musicScan.valid();
         app.update(dt);
         if (libraryReady && !settingsPath.empty() && now >= nextSettingsSave) {
             saveChangedSettings();
             nextSettingsSave = now + saveInterval;
+        }
+        if (web.running() && now >= nextWebPublish) {
+            WebConfigState state;
+            state.folder = musicPath.string();
+            state.tracks = app.player.hasMediaLibrary() ? app.player.librarySize() : 0;
+            state.message = libraryMessage;
+            state.canScan = !choosingMusicFolder && app.canScanMusic();
+            state.review = app.missingMusicReview();
+            state.missing = app.missingMusicFiles();
+            state.removing = app.removingMusicFiles();
+            state.settings = app.webSettings();
+            if (const auto* track = app.player.track()) {
+                state.track = track->title;
+                state.artist = track->artist;
+            }
+            if (app.musicScan)
+                state.scan = WebConfigState::Scan{app.musicScan->checked, app.musicScan->total,
+                                                app.musicScan->mode == MusicScanMode::Full};
+            web.publish(state);
+            nextWebPublish = now + 150'000'000ULL;
+        }
+        if (web.running() && now >= nextDebugPublish) {
+            WebDebugState state;
+            collectSystemDebug(state);
+            state.version = textOrEmpty(SDL_GetAppMetadataProperty(SDL_PROP_APP_METADATA_VERSION_STRING));
+            const int sdlVersion = SDL_GetVersion();
+            state.sdlVersion = std::to_string(SDL_VERSIONNUM_MAJOR(sdlVersion)) + '.' +
+                               std::to_string(SDL_VERSIONNUM_MINOR(sdlVersion)) + '.' +
+                               std::to_string(SDL_VERSIONNUM_MICRO(sdlVersion));
+            state.mode = kiosk ? "kiosk" : separate ? "panels" : "studio";
+            state.uptimeMs = SDL_GetTicks();
+            state.frameMs = frameMs;
+            state.powerState = debugPowerState(powerState);
+            if (batteryPercent >= 0)
+                state.batteryPercent = batteryPercent;
+            state.wifiConnected = app.wifiConnected;
+            state.bluetoothConnected = app.bluetoothConnected();
+            state.lidClosed = app.lid;
+            state.displaysOff = app.displaysOff();
+            state.videoDriver = textOrEmpty(SDL_GetCurrentVideoDriver());
+            int displayCount = 0;
+            if (auto* ids = SDL_GetDisplays(&displayCount)) {
+                for (int i = 0; i < displayCount; ++i)
+                    if (const auto* mode = SDL_GetCurrentDisplayMode(ids[i]))
+                        state.displays.push_back({textOrEmpty(SDL_GetDisplayName(ids[i])), mode->w, mode->h, mode->refresh_rate});
+                SDL_free(ids);
+            }
+            for (const auto& window : windows)
+                state.windows.push_back(window->debugState());
+            state.audio.driver = textOrEmpty(SDL_GetCurrentAudioDriver());
+            state.audio.playing = app.player.playing;
+            if (const auto* track = app.player.track()) {
+                state.audio.codec = track->format;
+                state.audio.sourceRate = track->rate;
+            }
+            const auto format = app.player.audioFormat();
+            state.audio.decoderHz = format.decoderHz;
+            state.audio.deviceHz = format.deviceHz;
+            state.audio.deviceChannels = format.deviceChannels;
+            state.audio.deviceBufferFrames = format.deviceBufferFrames;
+            SDL_free(SDL_GetTouchDevices(&state.touchDevices));
+            for (const auto& [id, pad] : gamepads) {
+                (void)id;
+                state.gamepads.push_back(textOrEmpty(SDL_GetGamepadName(pad)));
+            }
+            state.lastControllerEvent = lastControllerEvent;
+            state.tracks = app.player.hasMediaLibrary() ? app.player.librarySize() : 0;
+            state.queue = app.player.queue.size();
+            state.missing = app.missingMusicFiles();
+            state.libraryStatus = libraryMessage;
+            if (app.musicScan)
+                state.scan = WebConfigState::Scan{app.musicScan->checked, app.musicScan->total,
+                                                app.musicScan->mode == MusicScanMode::Full};
+            state.logs = debugLog.recent();
+            web.publishDebug(state);
+            nextDebugPublish = now + 1'000'000'000ULL;
         }
         for (const auto& window : windows) {
             if (window->kind == Window::Pane::Both)
@@ -593,6 +890,7 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
         }
     }
 
+    web.stop();
     if (libraryReady && !settingsPath.empty())
         saveChangedSettings();
 
@@ -674,6 +972,7 @@ int main(int argc, char** argv)
         else if (arg == "--kiosk") kiosk = separate = true;
         else if (arg == "--long-metadata") longMetadata = true;
         else if (arg == "--bluetooth-demo") bluetoothDemo = true;
+        else if (arg == "--web-config") continue; // Earlier previews required this flag.
         else if (arg == "--music-path" && i + 1 < argc) {
             musicPath = availableMusicPath(argv[++i]);
             if (musicPath.empty()) {

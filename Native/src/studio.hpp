@@ -16,7 +16,7 @@ public:
     void cancel(DeckUi& ui);
 
 private:
-    enum class Kind { Scale, Theme, Key, Stick, Help, Library, MusicFolder };
+    enum class Kind { Scale, Theme, Key, Stick, Help, Library, MusicFolder, Rescan };
     struct Control { Rect box; Kind kind; int code; };
     enum class Drag { None, Lower, Pan, Control };
     std::vector<Control> controls;

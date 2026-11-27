@@ -1,0 +1,31 @@
+:root[data-bs-theme="dark"] {
+  color-scheme: dark;
+  --bs-body-bg: #000;
+  --bs-body-bg-rgb: 0, 0, 0;
+  --bs-secondary-bg: #080808;
+  --bs-secondary-bg-rgb: 8, 8, 8;
+  --bs-tertiary-bg: #000;
+  --bs-tertiary-bg-rgb: 0, 0, 0;
+  --bs-border-color: #303030;
+  --bs-body-color: #f5f5f5;
+  --bs-body-color-rgb: 245, 245, 245;
+  --bs-secondary-color: #b6b6b6;
+}
+.btn-outline-secondary {
+  --bs-btn-color: #c9c9c9;
+  --bs-btn-border-color: #454545;
+  --bs-btn-hover-bg: #141414;
+  --bs-btn-hover-border-color: #777;
+  --bs-btn-active-bg: #222;
+  --bs-btn-disabled-color: #9c9c9c;
+  --bs-btn-disabled-border-color: #383838;
+}
+main.container { max-width: 960px; }
+.deck-logo { height: auto; max-width: 48%; margin-left: -4px; }
+.setting { display: grid; grid-template-columns: 1fr minmax(132px, 48%); align-items: center; gap: .75rem; }
+.feedback:empty { display: none; }
+progress { height: .875rem; accent-color: var(--bs-primary); }
+.scan-actions .btn { min-height: 42px; white-space: nowrap; }
+.debug-fields { display: grid; grid-template-columns: 1fr 1.35fr; gap: .4rem .75rem; }
+.debug-fields dd { margin: 0; overflow-wrap: anywhere; }
+.debug-log { max-height: 28rem; white-space: pre-wrap; overflow-wrap: anywhere; }

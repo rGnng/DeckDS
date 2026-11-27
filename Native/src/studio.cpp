@@ -139,11 +139,24 @@ void Studio::render(Draw& d, DeckUi& ui, SDL_Window* window, SDL_Texture* upper,
                          ? folder : std::string_view("Folder");
         control(d, {left.x, controlY, left.w, 40}, Kind::MusicFolder, 0, label);
         controlY += 48;
+        if (ui.musicFolderSelected) {
+            const Rect rescan{left.x, controlY, left.w, 40};
+            if (ui.canScanMusic()) {
+                control(d, rescan, Kind::Rescan, 0, "Rescan");
+            } else if (ui.musicScan && ui.musicScan->inBackground) {
+                ui.musicScan->draw(d, {rescan.x - 8, rescan.y - 6, rescan.w + 16, rescan.h + 12},
+                                   Size::Desktop, Size::Desktop);
+            } else {
+                d.frame(rescan, 8, p.card, p.border);
+                d.label("Rescan", inset(rescan, 2), Size::Desktop, p.muted, Face::Display, Align::Center, true);
+            }
+            controlY += 48;
+        }
     }
     control(d, {left.x, controlY, left.w, 40}, Kind::Help, 0, "Keys", ui.showKeys);
     controlY += 48;
     if (ui.player.hasMediaLibrary()) {
-        if (ui.mediaStatus.empty()) {
+        if (ui.mediaStatus.empty() && (!ui.musicScan || ui.musicScan->inBackground)) {
             const std::string tracks = std::to_string(ui.player.librarySize()) + " Tracks";
             d.label(tracks, {left.x, controlY, left.w, 36}, Size::Desktop, p.dim, Face::Display, Align::Center, true);
         }
@@ -278,7 +291,7 @@ void Studio::moveStick(DeckUi& ui, float x, float y)
     const float length = std::max(1.f, std::hypot(stickX, stickY));
     stickX /= length;
     stickY /= length;
-    ui.analog(stickX);
+    ui.analog(stickX, stickY);
 }
 
 void Studio::paneInput(DeckUi& ui, float x, float y, int phase)
@@ -308,7 +321,8 @@ void Studio::mouseButton(DeckUi& ui, Uint8 button, bool down, float x, float y)
     if (down) {
         const auto match = std::ranges::find_if(controls, [&](const Control& ctl) {
             return inside(ctl.box, x, y) && (ctl.kind == Kind::Help ||
-                   (!ui.showKeys && (ctl.kind == Kind::Library || ctl.kind == Kind::MusicFolder ||
+                   (!ui.showKeys && (ctl.kind == Kind::Library || ctl.kind == Kind::Rescan ||
+                                     (ctl.kind == Kind::MusicFolder && !ui.musicRemovalPending()) ||
                                      inside(sidebar, x, y))));
         });
         if (match != controls.end()) {
@@ -345,13 +359,14 @@ void Studio::mouseButton(DeckUi& ui, Uint8 button, bool down, float x, float y)
                 ui.cancelInput();
         } else if (active->kind == Kind::Stick) {
             stickX = stickY = 0;
-            ui.analog(0);
+            ui.analog(0, 0);
         } else if (inside(active->box, x, y)) {
             if (active->kind == Kind::Scale) ui.scaleMode = static_cast<PreviewScale>(active->code);
             if (active->kind == Kind::Theme) ui.theme = static_cast<Theme>(active->code);
             if (active->kind == Kind::Help) ui.showKeys = !ui.showKeys;
             if (active->kind == Kind::Library) ui.toggleLibrary();
             if (active->kind == Kind::MusicFolder) ui.musicFolderRequested = true;
+            if (active->kind == Kind::Rescan) ui.musicRescanRequested = MusicScanMode::Quick;
             ui.player.chime("", true);
         }
         active.reset();

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeckDS Web Config</title>
+  <link rel="stylesheet" href="/bootstrap.min.css">
+  <link rel="stylesheet" href="/config.css">
+  <script defer src="/config.js"></script>
+</head>
+<body class="bg-body-tertiary">
+  <main class="container py-4 py-md-5">
+    <header class="d-flex justify-content-between align-items-center gap-3 border-bottom pb-3 mb-4">
+      <img class="deck-logo" src="/logo.svg" alt="DeckDS" width="148" height="44">
+      <div class="d-flex align-items-center gap-3">
+        <span id="connection" class="text-body-secondary small" role="status">Connecting…</span>
+        <a class="btn btn-sm btn-outline-secondary" href="/debug">Debug</a>
+      </div>
+    </header>
+
+    <div class="row g-3">
+      <section class="col-lg-7" aria-labelledby="library-heading">
+        <div class="card">
+          <div class="card-body p-3 p-sm-4">
+            <div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2">
+              <h1 class="h5 mb-0" id="library-heading">Music Library</h1>
+              <strong id="tracks" class="small font-monospace text-body-secondary"></strong>
+            </div>
+            <p id="folder" class="small text-break font-monospace text-body-secondary mt-2 mb-3"></p>
+            <div class="row g-2 scan-actions">
+              <div class="col"><button id="quick" class="btn btn-sm btn-primary w-100" type="button" disabled>Quick Scan</button></div>
+              <div class="col"><button id="full" class="btn btn-sm btn-outline-secondary w-100" type="button" disabled>Full Scan</button></div>
+              <div class="col"><button class="btn btn-sm btn-outline-secondary w-100" type="button" disabled>Sync</button></div>
+            </div>
+            <div id="scan" class="border-top pt-3 mt-3" hidden>
+              <div class="d-flex justify-content-between gap-3">
+                <span id="scan-mode"></span>
+                <span id="percent" class="font-monospace"></span>
+              </div>
+              <progress class="w-100" max="100" value="0" id="bar" aria-label="Library scan progress"></progress>
+              <p id="count" class="small font-monospace text-body-secondary mb-0"></p>
+            </div>
+            <p id="library-message" class="feedback small text-body-secondary mt-3 mb-0" role="status"></p>
+            <section class="border-top pt-3 mt-3" id="review" aria-labelledby="review-heading" hidden>
+              <h2 class="h6" id="review-heading">Missing Files</h2>
+              <p class="mb-1" id="missing"></p>
+              <p class="small text-body-secondary" id="review-question">Remove the missing entries from the index?</p>
+              <div class="row g-2">
+                <div class="col"><button id="keep" class="btn btn-outline-secondary w-100" type="button">Keep</button></div>
+                <div class="col"><button id="remove" class="btn btn-outline-danger w-100" type="button">Remove</button></div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="col-lg-5" aria-labelledby="settings-heading">
+        <div class="card">
+          <div class="card-body p-3 p-sm-4">
+            <h2 class="h5 mb-3" id="settings-heading">Deck Settings</h2>
+            <div class="vstack gap-3">
+              <div class="setting">
+                <label class="form-label mb-0" for="theme">Deck theme</label>
+                <select id="theme" class="form-select" data-setting="theme" disabled>
+                  <option value="0">Obsidian</option><option value="1">Ceramic</option><option value="2">VFD</option>
+                </select>
+              </div>
+              <div class="setting">
+                <label class="form-label mb-0" for="brightness">Screen brightness</label>
+                <select id="brightness" class="form-select" data-setting="brightness" disabled>
+                  <option value="0">15%</option><option value="1">30%</option><option value="2">45%</option>
+                  <option value="3">60%</option><option value="4">75%</option><option value="5">90%</option>
+                  <option value="6">100%</option>
+                </select>
+              </div>
+              <div class="setting">
+                <label class="form-label mb-0" for="clock">Time format</label>
+                <select id="clock" class="form-select" data-setting="clock" disabled>
+                  <option value="0">12-hour</option><option value="1">24-hour</option>
+                </select>
+              </div>
+              <div class="setting">
+                <label class="form-label mb-0" for="sfx">UI sound effects</label>
+                <select id="sfx" class="form-select" data-setting="sfx" disabled>
+                  <option value="0">Mute</option><option value="1">SFX On</option>
+                </select>
+              </div>
+              <div class="setting">
+                <label class="form-label mb-0" for="lid">Lid close</label>
+                <select id="lid" class="form-select" data-setting="lid" disabled>
+                  <option value="0">Pause</option><option value="1">Pocket Audio</option>
+                </select>
+              </div>
+            </div>
+            <p id="settings-error" class="feedback text-danger small mt-3 mb-0" role="alert"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="col-12" aria-labelledby="now-heading">
+        <div class="card">
+          <div class="card-body p-3 p-sm-4">
+            <h2 class="h5" id="now-heading">Now Playing</h2>
+            <strong class="text-break" id="track"></strong>
+            <p class="text-body-secondary text-break mb-0" id="artist"></p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

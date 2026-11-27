@@ -14,10 +14,14 @@ public:
         std::span<const Sample> samples;
         int rate = 0;
     };
+    struct AudioFormat {
+        int decoderHz = 0, deviceHz = 0, deviceChannels = 0, deviceBufferFrames = 0;
+    };
     struct Snapshot {
         Status status = Status::Idle;
         double seconds = 0;
         std::array<Sample, 256> scope{};
+        AudioFormat format{};
     };
 
     MediaPlayback();

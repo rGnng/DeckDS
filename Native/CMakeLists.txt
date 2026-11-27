@@ -30,6 +30,7 @@ add_custom_command(
 add_executable(DeckDS MACOSX_BUNDLE
     src/main.cpp src/studio.cpp src/player.cpp src/draw.cpp src/stage.cpp src/deck_ui.cpp src/preview_state.cpp
     src/bluetooth.cpp src/media.cpp src/media_playback.cpp src/media_visuals.cpp
+    src/web_config.cpp
     "${ASSET_HEADER}"
 )
 target_compile_features(DeckDS PRIVATE cxx_std_20)
@@ -37,6 +38,25 @@ target_compile_options(DeckDS PRIVATE -Wall -Wextra -Wpedantic)
 target_include_directories(DeckDS PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(DeckDS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf SDL3_image::SDL3_image)
 if(PkgConfig_FOUND)
+    pkg_check_modules(MICROHTTPD QUIET IMPORTED_TARGET libmicrohttpd>=0.9.71)
+    if(MICROHTTPD_FOUND AND (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+        set(WEB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/web")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${WEB_DIR}/index.html" "${WEB_DIR}/config.css" "${WEB_DIR}/config.js"
+            "${WEB_DIR}/debug.html" "${WEB_DIR}/debug.js"
+            "${WEB_DIR}/vendor/bootstrap.min.css" "${DESIGN}/deckds-logo.svg")
+        file(READ "${WEB_DIR}/index.html" DECKDS_WEB_HTML)
+        file(READ "${WEB_DIR}/config.css" DECKDS_WEB_CSS)
+        file(READ "${WEB_DIR}/config.js" DECKDS_WEB_JS)
+        file(READ "${WEB_DIR}/debug.html" DECKDS_DEBUG_HTML)
+        file(READ "${WEB_DIR}/debug.js" DECKDS_DEBUG_JS)
+        file(READ "${WEB_DIR}/vendor/bootstrap.min.css" DECKDS_WEB_BOOTSTRAP HEX)
+        string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," DECKDS_WEB_BOOTSTRAP "${DECKDS_WEB_BOOTSTRAP}")
+        file(READ "${DESIGN}/deckds-logo.svg" DECKDS_WEB_LOGO)
+        configure_file(src/web_assets.inc.in "${CMAKE_CURRENT_BINARY_DIR}/web_assets.inc" @ONLY)
+        target_link_libraries(DeckDS PRIVATE PkgConfig::MICROHTTPD)
+        target_compile_definitions(DeckDS PRIVATE DECKDS_WEB_CONFIG)
+    endif()
     pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET libavformat>=59 libavcodec>=59 libavutil>=57 libswresample>=4)
     if(FFMPEG_FOUND AND SQLite3_FOUND)
         target_include_directories(DeckDS PRIVATE ${SQLite3_INCLUDE_DIRS})

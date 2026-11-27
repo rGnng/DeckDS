@@ -66,6 +66,7 @@ public:
 
     void setMediaLibrary(MediaLibrary library);
     void refreshMediaLibrary(MediaLibrary library);
+    std::vector<int> removeMediaTracks(std::span<const std::string> ids);
     bool hasMediaLibrary() const { return mediaLibraryActive; }
     const Track* track() const;
     float progress() const;
@@ -89,6 +90,7 @@ public:
     int librarySize() const;
     std::array<float, 2> sample(double time) const;
     MediaPlayback::SpectrumInput readSpectrum(std::span<MediaPlayback::Sample> buffer) const;
+    MediaPlayback::AudioFormat audioFormat() const;
 
 private:
     SDL_AudioStream* output = nullptr;
