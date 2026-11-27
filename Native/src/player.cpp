@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <numbers>
 #include <random>
+#include <unordered_map>
 
 namespace {
 constexpr int sampleRate = 48000;
@@ -54,10 +55,61 @@ Player::Player() : tracks(std::begin(demoTracks), std::end(demoTracks))
 
 Player::~Player()
 {
+    mediaPlayback.reset();
     if (speakerStream)
         SDL_DestroyAudioStream(speakerStream);
     if (output)
         SDL_DestroyAudioStream(output);
+}
+
+void Player::setMediaLibrary(MediaLibrary library)
+{
+    stop();
+    currentStarted = false;
+    mediaLibraryActive = true;
+    mediaFiles = std::move(library.files);
+    rebuildMediaTracks();
+    stars.assign(mediaFiles.size(), false);
+    playlists.clear();
+    queue.clear();
+    history.clear();
+    played.clear();
+}
+
+void Player::refreshMediaLibrary(MediaLibrary library)
+{
+    // Keep existing track indices valid for playback, queue entries and open views.
+    std::unordered_map<std::string, size_t> incoming;
+    incoming.reserve(library.files.size());
+    for (size_t i = 0; i < library.files.size(); ++i)
+        incoming.emplace(library.files[i].id, i);
+    for (auto& file : mediaFiles) {
+        if (const auto match = incoming.find(file.id); match != incoming.end()) {
+            file = std::move(library.files[match->second]);
+            incoming.erase(match);
+        }
+    }
+    mediaFiles.reserve(mediaFiles.size() + incoming.size());
+    for (auto& file : library.files)
+        if (incoming.contains(file.id))
+            mediaFiles.push_back(std::move(file));
+    stars.resize(mediaFiles.size(), false);
+    rebuildMediaTracks();
+    ++catalogRevision;
+}
+
+void Player::rebuildMediaTracks()
+{
+    tracks.clear();
+    tracks.reserve(mediaFiles.size());
+    for (auto& file : mediaFiles) {
+        file.visualKey = mediaKey("visual-v1|" + file.path + "|" + std::to_string(file.modificationStamp) +
+                                  "|" + std::to_string(file.bytes));
+        tracks.push_back({file.id, file.title, file.artist, file.album, file.format, file.rate, file.bitrate,
+                          file.added, {}, file.disc, file.number, file.year, file.duration, {}, 0.f, 0, 0, false,
+                          file.path, file.albumArtist, file.modified, file.visualKey, file.bytes, file.channels, file.bitDepth,
+                          file.lossless, file.missing});
+    }
 }
 
 const Track* Player::track() const
@@ -69,12 +121,33 @@ float Player::progress() const
     const auto* t = track();
     return (t && t->duration > 0) ? static_cast<float>(std::clamp(seconds / t->duration, 0.0, 1.0)) : 0.f;
 }
-int Player::librarySize() const { return largeLibrary ? static_cast<int>(tracks.size()) : defaultLibrarySize; }
+int Player::librarySize() const
+{
+    return largeLibrary || mediaLibraryActive ? static_cast<int>(tracks.size()) : defaultLibrarySize;
+}
 
 std::optional<int> Player::update(double dt)
 {
     std::optional<int> removedIndex;
-    if (playing && track()) {
+    if (playing && track() && !track()->path.empty()) {
+        if (!mediaPlayback)
+            resetAudio();
+        mediaPlayback->setGain(musicGain());
+        currentMedia = mediaPlayback->snapshot();
+        seconds = std::max(seconds, currentMedia.seconds);
+        if (currentMedia.status == MediaPlayback::Status::Failed) {
+            SDL_Log("Unable to play the selected audio file");
+            playing = false;
+            resetAudio(false);
+        } else if (currentMedia.status == MediaPlayback::Status::Finished) {
+            if (repeat == 2)
+                seek(0);
+            else
+                removedIndex = next();
+        }
+        feedAudio();
+        return removedIndex;
+    } else if (playing && track()) {
         seconds += dt;
         if (seconds >= track()->duration) {
             if (repeat == 2)
@@ -126,6 +199,8 @@ std::optional<int> Player::playToggle()
             return std::nullopt;
         return -1;
     }
+    if (playing && mediaPlayback && !track()->path.empty())
+        seconds = std::max(seconds, mediaPlayback->snapshot().seconds);
     playing = !playing;
     if (playing)
         currentStarted = true;
@@ -268,8 +343,21 @@ void Player::toggleShuffle()
 void Player::resetAudio(bool flushStream)
 {
     synthesisTime = seconds;
+    currentMedia = {};
+    if (playing && track() && !track()->path.empty()) {
+        if (!mediaPlayback)
+            mediaPlayback = std::make_unique<MediaPlayback>();
+        mediaPlayback->play(track()->path, seconds, musicGain());
+    } else if (mediaPlayback) {
+        mediaPlayback->stop();
+    }
     if (output && flushStream)
         SDL_ClearAudioStream(output);
+}
+
+float Player::musicGain() const
+{
+    return mute ? 0.f : volume / 100.f;
 }
 
 int Player::queuedFrames(SDL_AudioStream* stream) const
@@ -322,6 +410,12 @@ std::array<float, 2> Player::sample(double t) const
         return {};
 
     const auto& song = *track();
+    if (!song.path.empty()) {
+        const auto behind = std::llround((currentMedia.seconds - t) * MediaPlayback::scopeRate);
+        if (behind <= 0 || static_cast<size_t>(behind) > currentMedia.scope.size())
+            return {};
+        return currentMedia.scope[currentMedia.scope.size() - static_cast<size_t>(behind)];
+    }
     const double beat = t * song.bpm / 60.0;
     const double onset = beat - std::floor(beat);
     const double punch = std::exp(-onset * 5.6);
@@ -343,20 +437,41 @@ std::array<float, 2> Player::sample(double t) const
             static_cast<float>(bass + chordRight + bell * 0.8 + beatTick + noise(t + .031) * shimmer)};
 }
 
+MediaPlayback::SpectrumInput Player::readSpectrum(std::span<MediaPlayback::Sample> buffer) const
+{
+    const auto* song = track();
+    if (!playing || !song)
+        return {};
+    if (!song->path.empty())
+        return mediaPlayback ? mediaPlayback->readSpectrum(buffer) : MediaPlayback::SpectrumInput{};
+
+    constexpr int rate = 16384;
+    constexpr size_t length = 1024;
+    if (buffer.size() < length)
+        return {};
+    const auto samples = buffer.first(length);
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const double time = seconds - static_cast<double>(samples.size() - i) / rate;
+        samples[i] = time >= 0 ? sample(time) : MediaPlayback::Sample{};
+    }
+    return {samples, rate};
+}
+
 void Player::feedAudio()
 {
-    if (!playing && tones.empty())
+    const bool playingDemo = playing && track() && track()->path.empty();
+    if (!playingDemo && tones.empty())
         return;
     const SDL_AudioSpec spec{SDL_AUDIO_F32, 2, sampleRate};
     const bool separateSfx = sfxSpeaker && !tones.empty();
-    if ((playing || (!sfxSpeaker && !tones.empty())) && !output && !audioUnavailable) {
+    if ((playingDemo || (!sfxSpeaker && !tones.empty())) && !output && !audioUnavailable) {
         output = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
         audioUnavailable = !output;
         if (output) {
             synthesisTime = seconds;
             SDL_ResumeAudioStreamDevice(output);
         } else {
-            SDL_Log("Demo output unavailable: %s", SDL_GetError());
+            SDL_Log("Audio output unavailable: %s", SDL_GetError());
         }
     }
     if (separateSfx && !speakerStream && !speakerUnavailable) {
@@ -422,42 +537,30 @@ void Player::feedAudio()
                 sfxQueued += chunkBytes;
             }
         }
-        if (!playing || !output)
-            return;
-        int queued = SDL_GetAudioStreamQueued(output);
-        while (queued >= 0 && queued < chunkBytes * 4) {
-            std::array<float, frames * 2> data{};
-            const float gain = mute ? 0.f : (volume / 100.f) * 0.5f;
-            for (int i = 0; i < frames; ++i) {
-                const auto signal = sample(synthesisTime);
-                data[i * 2] = std::clamp(signal[0] * gain, -1.f, 1.f);
-                data[i * 2 + 1] = std::clamp(signal[1] * gain, -1.f, 1.f);
-                synthesisTime += 1.0 / sampleRate;
-            }
-            if (!SDL_PutAudioStreamData(output, data.data(), chunkBytes))
-                break;
-            queued += chunkBytes;
-        }
-        return;
     }
 
     if (!output) {
-        tones.clear();
+        if (!sfxSpeaker)
+            tones.clear();
         return;
     }
     int queued = SDL_GetAudioStreamQueued(output);
     while (queued >= 0 && queued < chunkBytes * 4) {
         std::array<float, frames * 2> data{};
-        const float gain = mute ? 0.f : (volume / 100.f) * 0.5f;
+        const bool mixSfx = !sfxSpeaker && !tones.empty();
+        if (!mixSfx && !playingDemo)
+            break;
+        const float gain = musicGain() * .5f;
         for (int i = 0; i < frames; ++i) {
-            const auto signal = sample(synthesisTime);
-            const float fx = renderToneFrame();
+            const auto signal = playingDemo ? sample(synthesisTime) : std::array<float, 2>{};
+            if (playingDemo)
+                synthesisTime += 1.0 / sampleRate;
+            const float fx = mixSfx ? renderToneFrame() : 0.f;
             data[i * 2] = std::clamp(signal[0] * gain + fx, -1.f, 1.f);
             data[i * 2 + 1] = std::clamp(signal[1] * gain + fx, -1.f, 1.f);
-            if (playing)
-                synthesisTime += 1.0 / sampleRate;
         }
-        std::erase_if(tones, [](const Tone& tone) { return tone.age >= tone.length; });
+        if (mixSfx)
+            std::erase_if(tones, [](const Tone& tone) { return tone.age >= tone.length; });
         if (!SDL_PutAudioStreamData(output, data.data(), chunkBytes))
             break;
         queued += chunkBytes;

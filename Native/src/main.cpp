@@ -7,9 +7,14 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <future>
+#include <iterator>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <sstream>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -173,14 +178,43 @@ SDL_Keycode controllerKey(SDL_Gamepad* pad, Uint8 button)
     }
 }
 
-std::filesystem::path previewSettingsPath(bool longMetadata)
+std::filesystem::path previewPreferences()
 {
     const std::unique_ptr<char, decltype(&SDL_free)> directory(SDL_GetPrefPath("DeckDS", "DeckDS"), SDL_free);
     if (!directory) {
         SDL_Log("Cannot find the settings directory: %s", SDL_GetError());
         return {};
     }
-    return std::filesystem::path(directory.get()) / (longMetadata ? "preview-long-metadata.conf" : "preview.conf");
+    return directory.get();
+}
+
+std::filesystem::path availableMusicPath(const std::filesystem::path& path)
+{
+    std::error_code error;
+    const auto resolved = std::filesystem::canonical(path, error);
+    return !error && std::filesystem::is_directory(resolved, error) ? resolved : std::filesystem::path{};
+}
+
+struct FolderChoice {
+    std::filesystem::path path;
+    std::string error;
+};
+
+struct FolderPicker {
+    std::mutex mutex;
+    std::optional<FolderChoice> choice;
+};
+
+void SDLCALL musicFolderChosen(void* data, const char* const* files, int)
+{
+    const std::unique_ptr<std::shared_ptr<FolderPicker>> picker(static_cast<std::shared_ptr<FolderPicker>*>(data));
+    FolderChoice choice;
+    if (!files)
+        choice.error = SDL_GetError();
+    else if (*files)
+        choice.path = *files;
+    const std::lock_guard lock((*picker)->mutex);
+    (*picker)->choice = std::move(choice);
 }
 
 void loadClockSettings(const std::filesystem::path& path, DeckUi& app)
@@ -213,7 +247,7 @@ bool savePreviewSettings(const std::filesystem::path& path, std::string_view set
     return false;
 }
 
-int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo)
+int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::filesystem::path musicPath)
 {
     const char* base = SDL_GetBasePath();
     if (!base) {
@@ -224,11 +258,79 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo)
     DeckUi app;
     if (longMetadata)
         app.useLongMetadataFixture();
-    const auto settingsPath = bluetoothDemo ? std::filesystem::path{} : previewSettingsPath(longMetadata);
-    if (!settingsPath.empty()) {
+    const auto preferences = previewPreferences();
+    const auto folderFile = preferences.empty() ? std::filesystem::path{} : preferences / "music-folder";
+    const auto database = preferences.empty() ? std::filesystem::path{} : preferences / "library.sqlite";
+    const bool explicitMusicPath = !musicPath.empty();
+    if (!explicitMusicPath && !longMetadata && !bluetoothDemo && mediaSupported() && !folderFile.empty()) {
+        std::ifstream input(folderFile, std::ios::binary);
+        musicPath = std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    }
+    std::filesystem::path settingsPath;
+    const auto loadSettings = [&] {
+        if (settingsPath.empty())
+            return;
         std::ifstream settings(settingsPath);
-        if (!app.loadPreview(settings) && !longMetadata)
+        if (!app.loadPreview(settings) && !longMetadata && musicPath.empty())
             loadClockSettings(settingsPath.parent_path() / "clock.conf", app);
+    };
+    std::atomic<size_t> scanned{0};
+    std::future<MediaLibrary> musicScan;
+    std::jthread scanThread;
+    bool libraryReady = true;
+    const auto startMusicScan = [&](std::filesystem::path path, bool remember) {
+        if (scanThread.joinable()) {
+            scanThread.request_stop();
+            scanThread.join();
+        }
+        const auto resolved = availableMusicPath(path);
+        const auto root = resolved.empty() ? std::move(path) : resolved;
+        const bool keepCurrent = libraryReady && app.player.hasMediaLibrary() && musicPath == root;
+        musicPath = root;
+        musicScan = {};
+        if (!keepCurrent) {
+            libraryReady = false;
+            settingsPath = preferences.empty() ? std::filesystem::path{}
+                : preferences / ("preview-music-" + mediaKey(musicPath.string()) + ".conf");
+            try {
+                if (auto cached = loadMusicIndex(musicPath, database); cached && !cached->files.empty()) {
+                    SDL_Log("Loaded %zu tracks from the music library index", cached->files.size());
+                    app.useMediaLibrary(std::move(*cached));
+                    libraryReady = true;
+                    loadSettings();
+                }
+            } catch (const std::exception& error) {
+                SDL_Log("Unable to read the music library index: %s", error.what());
+            }
+            if (!libraryReady)
+                app.useMediaLibrary({});
+        }
+        app.mediaStatus.clear();
+        if (resolved.empty()) {
+            if (!libraryReady)
+                app.mediaStatus = "Music folder is unavailable";
+            return;
+        }
+        if (remember && !folderFile.empty())
+            savePreviewSettings(folderFile, musicPath.string());
+        if (!libraryReady)
+            app.mediaStatus = "Scanning music…";
+        scanned.store(0, std::memory_order_relaxed);
+        std::promise<MediaLibrary> result;
+        musicScan = result.get_future();
+        scanThread = std::jthread([&scanned, musicPath, database, result = std::move(result)](std::stop_token stop) mutable {
+            try {
+                result.set_value(scanMusic(musicPath, scanned, stop, database));
+            } catch (...) {
+                result.set_exception(std::current_exception());
+            }
+        });
+    };
+    if (!musicPath.empty()) {
+        startMusicScan(musicPath, explicitMusicPath);
+    } else if (!bluetoothDemo && !preferences.empty()) {
+        settingsPath = preferences / (longMetadata ? "preview-long-metadata.conf" : "preview.conf");
+        loadSettings();
     }
     if (bluetoothDemo)
         app.useBluetoothFixture();
@@ -271,6 +373,8 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo)
             return 1;
         }
     auto* textWindow = windows.back()->window;
+    const auto picker = std::make_shared<FolderPicker>();
+    bool choosingMusicFolder = false;
     if (kiosk)
         SDL_HideCursor();
 
@@ -420,8 +524,65 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo)
             app.wifiConnected = isWifiConnected();
             nextWifiPoll = now + 3'000'000'000ULL;
         }
+        if (std::exchange(app.musicFolderRequested, false) && !choosingMusicFolder) {
+            choosingMusicFolder = true;
+            const auto location = availableMusicPath(musicPath);
+            const auto initialFolder = location.string();
+            SDL_ShowOpenFolderDialog(musicFolderChosen, new std::shared_ptr<FolderPicker>(picker), textWindow,
+                                     initialFolder.empty() ? nullptr : initialFolder.c_str(), false);
+        }
+        if (choosingMusicFolder) {
+            std::optional<FolderChoice> choice;
+            {
+                const std::lock_guard lock(picker->mutex);
+                choice = std::exchange(picker->choice, std::nullopt);
+            }
+            if (choice) {
+                choosingMusicFolder = false;
+                if (!choice->path.empty()) {
+                    auto selected = availableMusicPath(choice->path);
+                    if (!selected.empty()) {
+                        if (libraryReady && !settingsPath.empty())
+                            saveChangedSettings();
+                        startMusicScan(std::move(selected), true);
+                        savedSettings = previewState();
+                    } else {
+                        choice->error = "The selected folder is unavailable.";
+                    }
+                }
+                if (!choice->error.empty())
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Music Folder", choice->error.c_str(), textWindow);
+            }
+        }
+        if (musicScan.valid()) {
+            if (musicScan.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                try {
+                    auto library = musicScan.get();
+                    SDL_Log("Music library indexed %zu tracks (%zu probed, %zu cached, %zu skipped, %zu missing)",
+                            library.files.size(), library.probed, library.reused, library.skipped, library.missing);
+                    if (libraryReady) {
+                        app.player.refreshMediaLibrary(std::move(library));
+                    } else if (library.files.empty()) {
+                        app.mediaStatus = "No playable music files found";
+                    } else {
+                        app.useMediaLibrary(std::move(library));
+                        app.mediaStatus.clear();
+                        loadSettings();
+                        savedSettings = previewState();
+                        libraryReady = true;
+                    }
+                } catch (const std::exception& error) {
+                    SDL_Log("Music library scan failed: %s", error.what());
+                    if (!libraryReady)
+                        app.mediaStatus = "Unable to scan the music folder";
+                }
+            } else if (!libraryReady) {
+                app.mediaStatus = "Scanning music… " + std::to_string(scanned.load(std::memory_order_relaxed));
+            }
+        }
+        app.mediaScanning = musicScan.valid();
         app.update(dt);
-        if (!settingsPath.empty() && now >= nextSettingsSave) {
+        if (libraryReady && !settingsPath.empty() && now >= nextSettingsSave) {
             saveChangedSettings();
             nextSettingsSave = now + saveInterval;
         }
@@ -432,7 +593,7 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo)
         }
     }
 
-    if (!settingsPath.empty())
+    if (libraryReady && !settingsPath.empty())
         saveChangedSettings();
 
     for (const auto& [id, gamepad] : gamepads) {
@@ -506,18 +667,34 @@ int dumpViews(const std::filesystem::path& outDir, bool longMetadata, bool bluet
 int main(int argc, char** argv)
 {
     bool separate = false, kiosk = false, longMetadata = false, bluetoothDemo = false;
-    std::filesystem::path dumpDir;
+    std::filesystem::path dumpDir, musicPath;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         if (arg == "--panels") separate = true;
         else if (arg == "--kiosk") kiosk = separate = true;
         else if (arg == "--long-metadata") longMetadata = true;
         else if (arg == "--bluetooth-demo") bluetoothDemo = true;
+        else if (arg == "--music-path" && i + 1 < argc) {
+            musicPath = availableMusicPath(argv[++i]);
+            if (musicPath.empty()) {
+                std::cerr << "Music path must be a readable directory.\n";
+                return 2;
+            }
+        }
         else if (arg == "--dump-views" && i + 1 < argc) dumpDir = argv[++i];
         else {
-            std::cout << "Usage: DeckDS [--panels | --kiosk | --dump-views <dir>] [--long-metadata] [--bluetooth-demo]\n";
+            std::cout << "Usage: DeckDS [--panels | --kiosk | --dump-views <dir>] "
+                         "[--long-metadata | --bluetooth-demo | --music-path <dir>]\n";
             return arg == "--help" ? 0 : 2;
         }
+    }
+    if (!musicPath.empty() && (longMetadata || bluetoothDemo || !dumpDir.empty())) {
+        std::cerr << "--music-path opens the live preview and cannot be combined with demo or snapshot options.\n";
+        return 2;
+    }
+    if (!musicPath.empty() && !mediaSupported()) {
+        std::cerr << "--music-path requires a build with FFmpeg and SQLite development libraries.\n";
+        return 2;
     }
 
     SDL_SetAppMetadata("DeckDS", "0.1", "org.deckds.native");
@@ -533,7 +710,7 @@ int main(int argc, char** argv)
         SDL_Quit();
         return 1;
     }
-    const int result = dumpDir.empty() ? run(separate, kiosk, longMetadata, bluetoothDemo)
+    const int result = dumpDir.empty() ? run(separate, kiosk, longMetadata, bluetoothDemo, musicPath)
                                        : dumpViews(dumpDir, longMetadata, bluetoothDemo);
     TTF_Quit();
     SDL_Quit();

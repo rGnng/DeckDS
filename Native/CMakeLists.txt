@@ -5,11 +5,14 @@ find_package(SDL3 3.2 CONFIG REQUIRED)
 find_package(SDL3_ttf 3.2 CONFIG REQUIRED)
 find_package(SDL3_image 3.2 CONFIG REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(PkgConfig QUIET)
+find_package(SQLite3 QUIET)
 find_program(NODEJS NAMES node nodejs REQUIRED)
 
 get_filename_component(DESIGN "${CMAKE_CURRENT_SOURCE_DIR}/../Design" ABSOLUTE)
 set(ASSET_HEADER "${CMAKE_CURRENT_BINARY_DIR}/design_assets.inc")
 set(NATIVE_ICONS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/arrow-repeat.svg"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/battery.svg"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/close.svg"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/wifi.svg"
@@ -24,13 +27,21 @@ add_custom_command(
 
 add_executable(DeckDS MACOSX_BUNDLE
     src/main.cpp src/studio.cpp src/player.cpp src/draw.cpp src/stage.cpp src/deck_ui.cpp src/preview_state.cpp
-    src/bluetooth.cpp
+    src/bluetooth.cpp src/media.cpp src/media_playback.cpp src/media_visuals.cpp
     "${ASSET_HEADER}"
 )
 target_compile_features(DeckDS PRIVATE cxx_std_20)
 target_compile_options(DeckDS PRIVATE -Wall -Wextra -Wpedantic)
 target_include_directories(DeckDS PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(DeckDS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf SDL3_image::SDL3_image)
+if(PkgConfig_FOUND)
+    pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET libavformat>=59 libavcodec>=59 libavutil>=57 libswresample>=4)
+    if(FFMPEG_FOUND AND SQLite3_FOUND)
+        target_include_directories(DeckDS PRIVATE ${SQLite3_INCLUDE_DIRS})
+        target_link_libraries(DeckDS PRIVATE PkgConfig::FFMPEG ${SQLite3_LIBRARIES})
+        target_compile_definitions(DeckDS PRIVATE DECKDS_FFMPEG)
+    endif()
+endif()
 set_target_properties(DeckDS PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER org.deckds.native
     MACOSX_BUNDLE_BUNDLE_NAME DeckDS
@@ -47,14 +58,11 @@ if(APPLE)
     target_link_libraries(DeckDS PRIVATE "${COREWLAN_FRAMEWORK}" "${FOUNDATION_FRAMEWORK}")
 else()
     target_sources(DeckDS PRIVATE src/wifi.cpp)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        find_package(PkgConfig QUIET)
-        if(PkgConfig_FOUND)
-            pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0)
-            if(GIO_FOUND)
-                target_link_libraries(DeckDS PRIVATE PkgConfig::GIO)
-                target_compile_definitions(DeckDS PRIVATE DECKDS_BLUEZ)
-            endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND PkgConfig_FOUND)
+        pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0)
+        if(GIO_FOUND)
+            target_link_libraries(DeckDS PRIVATE PkgConfig::GIO)
+            target_compile_definitions(DeckDS PRIVATE DECKDS_BLUEZ)
         endif()
     endif()
     foreach(font IN LISTS DECK_FONTS)

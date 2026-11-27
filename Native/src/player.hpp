@@ -1,5 +1,7 @@
 #pragma once
 
+#include "media.hpp"
+#include "media_playback.hpp"
 #include <SDL3/SDL.h>
 
 #include <array>
@@ -15,6 +17,10 @@ struct Track {
     float seed;
     int bpm, root;
     bool starred;
+    std::string_view path{}, albumArtist{}, modified{}, visualKey{};
+    uintmax_t bytes = 0;
+    int channels = 0, bitDepth = 0;
+    bool lossless = false, missing = false;
 };
 
 struct PlaylistFixture {
@@ -58,6 +64,9 @@ public:
     unsigned catalogRevision = 0;
     double seconds = 0;
 
+    void setMediaLibrary(MediaLibrary library);
+    void refreshMediaLibrary(MediaLibrary library);
+    bool hasMediaLibrary() const { return mediaLibraryActive; }
     const Track* track() const;
     float progress() const;
     // Reports the queue index consumed on advance, or -1 if playback reaches the end.
@@ -79,16 +88,23 @@ public:
     void chime(std::string_view cue, bool release);
     int librarySize() const;
     std::array<float, 2> sample(double time) const;
+    MediaPlayback::SpectrumInput readSpectrum(std::span<MediaPlayback::Sample> buffer) const;
 
 private:
     SDL_AudioStream* output = nullptr;
     SDL_AudioStream* speakerStream = nullptr;
+    bool mediaLibraryActive = false;
+    std::vector<MediaFile> mediaFiles;
+    std::unique_ptr<MediaPlayback> mediaPlayback;
+    MediaPlayback::Snapshot currentMedia;
     double synthesisTime = 0;
     struct Tone { const SfxAsset* sound; int length, age; };
     std::vector<Tone> tones;
     Uint64 lastDownNs = 0;
     int lastDownQueuedFrames = 0;
     bool audioUnavailable = false, speakerUnavailable = false;
+    float musicGain() const;
+    void rebuildMediaTracks();
     int queuedFrames(SDL_AudioStream* stream) const;
     void feedAudio();
     void recordPlayed();

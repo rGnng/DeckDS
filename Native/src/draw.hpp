@@ -68,10 +68,10 @@ public:
     float textWidth(std::string_view text, Size size, Face type = Face::Display, bool strong = false);
     std::vector<std::string> wrapText(std::string_view text, float width, Size size, Face type, bool strong);
     // A zero pixel size uses the SVG at the requested rectangle in every theme.
-    void icon(std::string_view name, Rect target, Color tint, int pixelSize = 32);
+    void icon(std::string_view name, Rect target, Color tint, int pixelSize = 32, float rotation = 0.f);
     void art(const Track* track, Rect target, float corner = 0);
     void vuDial(Rect area);
-    void texture(SDL_Texture* texture, Rect target, float opacity = 1);
+    void texture(SDL_Texture* texture, Rect target, float opacity = 1, float rotation = 0.f);
 
 private:
     struct TextTile {
@@ -95,8 +95,15 @@ private:
     TTF_Font* font(Face type, Size size, int weight);
     bool appendTextTile(TextImage& image, TTF_Font* font, std::string_view remaining);
     void artwork(const Track* track, Rect target);
+    SDL_Texture* localCover(const Track& track, int side);
     void roundedTexture(SDL_Texture* texture, Rect area, float corner);
     std::map<std::tuple<std::string_view, std::array<std::string_view, 3>, Theme, int, int>, SDL_Texture*> artCache;
+    struct CoverTexture {
+        std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)> image{nullptr, SDL_DestroyTexture};
+        Uint64 used = 0;
+    };
+    std::map<std::pair<std::string, int>, CoverTexture> localCovers;
+    Uint64 coverTick = 0;
     std::array<SDL_Texture*, 2> vuDials{};
     SDL_Texture* iconTexture(std::string_view name, int pixels);
 };

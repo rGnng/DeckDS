@@ -17,7 +17,10 @@ Color color(unsigned hex, Uint8 a)
 Color color(std::string_view hex)
 {
     unsigned value = 0;
-    std::from_chars(hex.data() + 1, hex.data() + hex.size(), value, 16);
+    if (hex.starts_with('#'))
+        hex.remove_prefix(1);
+    if (!hex.empty())
+        std::from_chars(hex.data(), hex.data() + hex.size(), value, 16);
     return color(value);
 }
 
@@ -651,7 +654,7 @@ SDL_Texture* Draw::iconTexture(std::string_view name, int pixels)
     return value;
 }
 
-void Draw::icon(std::string_view name, Rect r, Color tint, int pixelSize)
+void Draw::icon(std::string_view name, Rect r, Color tint, int pixelSize, float rotation)
 {
     const int pixels = vfd() ? pixelSize : 0;
     auto* value = iconTexture(name, pixels);
@@ -663,31 +666,76 @@ void Draw::icon(std::string_view name, Rect r, Color tint, int pixelSize)
         r.w = r.h = static_cast<float>(pixels);
     }
     SDL_SetTextureColorMod(value, tint.r, tint.g, tint.b);
-    texture(value, r, tint.a / 255.f);
+    texture(value, r, tint.a / 255.f, rotation);
+}
+
+SDL_Texture* Draw::localCover(const Track& track, int side)
+{
+    const auto key = std::pair(std::string(track.visualKey), side);
+    if (auto found = localCovers.find(key); found != localCovers.end()) {
+        found->second.used = ++coverTick;
+        return found->second.image.get();
+    }
+    const auto file = cachedArtwork(track.visualKey, track.path);
+    if (!file || file->empty())
+        return nullptr;
+    if (localCovers.size() >= 64) {
+        const auto oldest = std::ranges::min_element(localCovers, {}, [](const auto& entry) { return entry.second.used; });
+        localCovers.erase(oldest);
+    }
+    auto& cover = localCovers[key];
+    cover.used = ++coverTick;
+    auto* io = SDL_IOFromFile(file->string().c_str(), "rb");
+    if (!io)
+        return nullptr;
+    const std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> source(IMG_Load_IO(io, true), SDL_DestroySurface);
+    if (!source)
+        return nullptr;
+    const std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> image(
+        SDL_CreateSurface(side, side, SDL_PIXELFORMAT_RGBA32), SDL_DestroySurface);
+    if (!image)
+        return nullptr;
+    const int size = std::min(source->w, source->h);
+    const SDL_Rect crop{(source->w - size) / 2, (source->h - size) / 2, size, size};
+    SDL_SetSurfaceBlendMode(source.get(), SDL_BLENDMODE_NONE);
+    if (SDL_BlitSurfaceScaled(source.get(), &crop, image.get(), nullptr, SDL_SCALEMODE_LINEAR)) {
+        cover.image.reset(SDL_CreateTextureFromSurface(renderer, image.get()));
+        if (cover.image)
+            SDL_SetTextureScaleMode(cover.image.get(), SDL_SCALEMODE_LINEAR);
+    }
+    return cover.image.get();
 }
 
 void Draw::art(const Track* track, Rect r, float corner)
 {
-    if (corner <= 0) {
-        artwork(track, r);
-        return;
-    }
     const bool hero = r.w == 544;
     const int side = hero ? 544 : 256;
-    const auto key = track ? std::tuple(track->art, track->colors, Theme::Obsidian, 0, side)
-        : std::tuple(std::string_view(), std::array<std::string_view, 3>{}, theme, accentIndex, side);
-    auto found = artCache.find(key);
-    if (found == artCache.end()) {
-        auto* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, side, side);
-        if (!texture) {
+    SDL_Texture* cover = nullptr;
+    if (track && !track->path.empty()) {
+        cover = localCover(*track, side);
+        track = nullptr;
+    }
+    if (!cover) {
+        if (corner <= 0) {
             artwork(track, r);
             return;
         }
-        auto* prev = SDL_GetRenderTarget(renderer);
-        SDL_SetRenderTarget(renderer, texture);
-        artwork(track, {0, 0, static_cast<float>(side), static_cast<float>(side)});
-        SDL_SetRenderTarget(renderer, prev);
-        found = artCache.emplace(key, texture).first;
+        const auto key = track ? std::tuple(track->art, track->colors, Theme::Obsidian, 0, side)
+            : std::tuple(std::string_view(), std::array<std::string_view, 3>{}, theme, accentIndex, side);
+        auto found = artCache.find(key);
+        if (found == artCache.end()) {
+            auto* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, side, side);
+            if (!texture) {
+                artwork(track, r);
+                return;
+            }
+            auto* prev = SDL_GetRenderTarget(renderer);
+            SDL_SetRenderTarget(renderer, texture);
+            artwork(track, {0, 0, static_cast<float>(side), static_cast<float>(side)});
+            SDL_SetRenderTarget(renderer, prev);
+            found = artCache.emplace(key, texture).first;
+        }
+        cover = found->second;
     }
     if (hero) {
         const float borderCorner = vfd() ? 2.f : corner;
@@ -698,9 +746,9 @@ void Draw::art(const Track* track, Rect r, float corner)
         corner = 2.f;
     }
     if (corner <= 2.f)
-        SDL_RenderTexture(renderer, found->second, nullptr, &r);
+        SDL_RenderTexture(renderer, cover, nullptr, &r);
     else
-        roundedTexture(found->second, r, corner);
+        roundedTexture(cover, r, corner);
 }
 
 void Draw::roundedTexture(SDL_Texture* value, Rect r, float corner)
@@ -810,9 +858,12 @@ void Draw::artwork(const Track* track, Rect r)
     }
 }
 
-void Draw::texture(SDL_Texture* value, Rect target, float opacity)
+void Draw::texture(SDL_Texture* value, Rect target, float opacity, float rotation)
 {
     SDL_SetTextureAlphaMod(value, alpha(color(0xffffff), opacity).a);
-    SDL_RenderTexture(renderer, value, nullptr, &target);
+    if (rotation == 0.f)
+        SDL_RenderTexture(renderer, value, nullptr, &target);
+    else
+        SDL_RenderTextureRotated(renderer, value, nullptr, &target, rotation, nullptr, SDL_FLIP_NONE);
     SDL_SetTextureAlphaMod(value, 255);
 }

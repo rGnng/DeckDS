@@ -18,6 +18,8 @@ public:
     int clockOffsetMinutes = 0;
     int batteryPercent = 100;
     bool wifiConnected = false;
+    std::string mediaStatus;
+    bool mediaScanning = false, musicFolderRequested = false;
     Player player;
     bool lid = false;
     bool showKeys = false;
@@ -41,6 +43,7 @@ public:
     void cancelInput();
     bool loadPreview(std::istream& settings);
     void savePreview(std::ostream& settings) const;
+    void useMediaLibrary(MediaLibrary library);
     void useLongMetadataFixture();
     void useBluetoothFixture();
     void configureSnapshot(int preset);
@@ -85,7 +88,7 @@ private:
         Tab source;
         QueuePart queuePart;
         int track, playlist;
-        std::string title;
+        std::string title, subtitle;
     };
     struct CatalogPosition {
         float scroll = 0.f;
@@ -113,6 +116,9 @@ private:
     float queueLabelTime = 0.f;
     // The first phase moves the upper strip. The second phase reveals the lower waveform.
     float deckProgressTransition = 2.f;
+    std::string waveformTrackKey;
+    std::optional<MediaWaveform> deckWaveform;
+    float waveformLoadProgress = 1.f;
     float stageCentering = 1.f;
     std::array<float, 6> tabWidths{260, 108, 108, 108, 108, 108};
     std::array<float, 6> tabStart = tabWidths;

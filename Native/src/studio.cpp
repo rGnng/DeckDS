@@ -6,6 +6,7 @@
 
 namespace {
 constexpr float railWidth = 304, sidebarContent = 758;
+constexpr float columnGap = 14;
 constexpr float paneWidth = 1024, paneHeight = 768;
 constexpr float studioPixelsWide = 5120;
 constexpr float handheldWidthMM = 87.4f;
@@ -55,8 +56,11 @@ void Studio::render(Draw& d, DeckUi& ui, SDL_Window* window, SDL_Texture* upper,
         offsetX = offsetY = 0;
     }
     d.gradient({0, 0, w, h}, color(0x24262e), color(0x101115));
-    workspace = {14, 55, w - railWidth - 42, h - 98};
-    sidebar = {w - railWidth - 14, 55, railWidth, std::min(h - 70, sidebarContent)};
+    const float leftWidth = std::clamp(88.f + (w - 600.f) * .18f, 88.f, 124.f);
+    const Rect left{columnGap, columnGap, leftWidth, h - 2 * columnGap};
+    sidebar = {w - railWidth - columnGap, columnGap, railWidth, std::min(h - 2 * columnGap, sidebarContent)};
+    const float workspaceX = left.x + left.w + columnGap;
+    workspace = {workspaceX, columnGap, sidebar.x - columnGap - workspaceX, h - 43.f - columnGap};
     const float fit = std::min({(workspace.w - 16) / 1056, (workspace.h - 10) / 1594, 1.5f});
     float scaleX = fit, scaleY = fit;
     bool nearest = false;
@@ -125,11 +129,28 @@ void Studio::render(Draw& d, DeckUi& ui, SDL_Window* window, SDL_Texture* upper,
 
     const auto& p = d.p();
     const auto accent = colors(ui.theme, ui.currentAccent()).accent;
-    d.circle(25, 26, 4, accent);
-    d.label("DECK DS", {40, 8, 180, 36}, Size::Sub, p.text, Face::Display, Align::Left, true);
-    control(d, {w - 86, 5, 72, 44}, Kind::Help, 0, "Keys", ui.showKeys);
-    control(d, {w - 242, 5, 148, 44}, Kind::Library, 0,
-            ui.player.largeLibrary ? "2,000 Albums" : "100 Albums", ui.player.largeLibrary);
+    d.circle(left.x + 6, left.y + 17, 4, accent);
+    d.label("DECK DS", {left.x + 18, left.y, left.w - 18, 34},
+            left.w < 108 ? Size::Desktop : Size::Sub, p.text, Face::Display, Align::Left, true);
+    float controlY = left.y + 46;
+    if (mediaSupported()) {
+        constexpr std::string_view folder = "Music Folder";
+        const auto label = d.textWidth(folder, Size::Desktop, Face::Display, true) + 8 <= left.w
+                         ? folder : std::string_view("Folder");
+        control(d, {left.x, controlY, left.w, 40}, Kind::MusicFolder, 0, label);
+        controlY += 48;
+    }
+    control(d, {left.x, controlY, left.w, 40}, Kind::Help, 0, "Keys", ui.showKeys);
+    controlY += 48;
+    if (ui.player.hasMediaLibrary()) {
+        if (ui.mediaStatus.empty()) {
+            const std::string tracks = std::to_string(ui.player.librarySize()) + " Tracks";
+            d.label(tracks, {left.x, controlY, left.w, 36}, Size::Desktop, p.dim, Face::Display, Align::Center, true);
+        }
+    } else {
+        control(d, {left.x, controlY, left.w, 40}, Kind::Library, 0,
+                ui.player.largeLibrary ? "2,000 Albums" : "100 Albums", ui.player.largeLibrary);
+    }
 
     const std::string_view caption = ui.displaysOff() ? ui.sleepMessage() :
         maxX > 0 || maxY > 0 ? "Right-drag or Option-scroll to pan" : "RG DS PLUS / 2 × 1024 × 768";
@@ -229,9 +250,11 @@ void Studio::drawSidebar(Draw& d, const DeckUi& ui, std::string_view scaleDetail
 void Studio::drawHelp(Draw& d, float width, float height)
 {
     const auto& p = d.p();
-    d.rect({0, 52, width, height - 52}, color(0x000000, 182));
-    const float w = std::min(520.f, width - 28);
-    const Rect modal{std::round((width - w) / 2), std::round((height - 436) / 2), w, 436};
+    const float left = workspace.x - columnGap / 2;
+    const float available = width - left;
+    d.rect({left, 0, available, height}, color(0x000000, 182));
+    const float w = std::min(520.f, available - 28);
+    const Rect modal{left + std::round((available - w) / 2), std::round((height - 436) / 2), w, 436};
     d.frame(modal, 14, p.elevated, p.strong);
     d.label("Keyboard controls", {modal.x + 20, modal.y + 12, w - 40, 48}, Size::Title, p.text, Face::Display, Align::Left, true);
     const std::pair<std::string_view, std::string_view> shortcuts[] = {
@@ -285,7 +308,8 @@ void Studio::mouseButton(DeckUi& ui, Uint8 button, bool down, float x, float y)
     if (down) {
         const auto match = std::ranges::find_if(controls, [&](const Control& ctl) {
             return inside(ctl.box, x, y) && (ctl.kind == Kind::Help ||
-                   (!ui.showKeys && (ctl.kind == Kind::Library || inside(sidebar, x, y))));
+                   (!ui.showKeys && (ctl.kind == Kind::Library || ctl.kind == Kind::MusicFolder ||
+                                     inside(sidebar, x, y))));
         });
         if (match != controls.end()) {
             active = *match;
@@ -327,6 +351,7 @@ void Studio::mouseButton(DeckUi& ui, Uint8 button, bool down, float x, float y)
             if (active->kind == Kind::Theme) ui.theme = static_cast<Theme>(active->code);
             if (active->kind == Kind::Help) ui.showKeys = !ui.showKeys;
             if (active->kind == Kind::Library) ui.toggleLibrary();
+            if (active->kind == Kind::MusicFolder) ui.musicFolderRequested = true;
             ui.player.chime("", true);
         }
         active.reset();

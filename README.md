@@ -37,3 +37,17 @@ The SDL3 preview remembers display and audio settings, library layout and sortin
 Queue shows Played and Up Next with the current song between them. Opening Queue starts at Up Next and focuses its first song. Selecting a song plays it immediately and keeps the remaining Up Next order. After the queue finishes, Play starts the played sequence again.
 
 Run with `--long-metadata` to preview a track with long English and Japanese names in a separate preview session. On macOS, use `open Native/build/DeckDS.app --args --long-metadata`. Add `--dump-views <dir>` to capture the long-name test views as PNGs.
+
+### Local music library
+
+Install FFmpeg and SQLite development libraries and pkg-config, then configure and rebuild. On macOS, use `brew install ffmpeg pkgconf` and the SQLite library from the macOS SDK. On Debian or Ubuntu, install `pkg-config libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libsqlite3-dev`.
+
+```sh
+open -n Native/build/DeckDS.app --args --music-path "/path/to/Music"
+# Linux
+Native/build/DeckDS --music-path "/path/to/Music"
+```
+
+Use **Music Folder** in the preview’s left column to choose the single active library folder. DeckDS opens the last catalog from `library.sqlite` in its local preferences, then checks the folder in the background. It reads tags for new files and files whose size or modification time changed. Missing files stay in the index and are marked in Get Info. The source files are read-only, and each folder keeps its own saved playback position, queue, favorites, and playlists.
+
+DeckDS reads embedded album art and common folder covers on demand. The Deck waveform uses fixed-scale RMS and loads the previous track and first Up Next waveform in the background. Embedded covers and waveforms are cached alongside the library index.

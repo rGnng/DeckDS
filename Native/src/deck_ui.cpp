@@ -6,9 +6,11 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <map>
 #include <numbers>
 #include <numeric>
 #include <random>
+#include <set>
 
 // Keep the manual clock controls for when they are needed again.
 #define DECKDS_ENABLE_SET_CLOCK 0
@@ -282,7 +284,7 @@ void DeckUi::update(double dt)
     if (!displaysOff())
         rowMarqueeTime += step;
     if (!displaysOff() && (stage != 0 || stageTime < 1))
-        meter.update(player, dt);
+        meter.update(player, dt, stage == 2 || (stageTime < 1 && outgoingStage == 2));
     stageTime = std::min(1.f, stageTime + step / stageFadeSeconds);
     tabTime = std::min(1.f, tabTime + step / .22f);
     if (tab == Tab::Queue)
@@ -301,14 +303,45 @@ void DeckUi::update(double dt)
     }
 
     const float progressStep = step / progressPhaseSeconds;
+    const auto* track = player.track();
+    const bool local = track && !track->path.empty();
+    const std::string_view waveformKey = !track ? std::string_view{} : local ? track->visualKey : track->id;
+    const bool waveformChanged = waveformKey != waveformTrackKey;
+    if (waveformChanged) {
+        waveformTrackKey = waveformKey;
+        deckWaveform.reset();
+    }
+    const bool waveformWasReady = !waveformChanged && (!local || deckWaveform.has_value());
+    if (!displaysOff()) {
+        if (local && !track->missing && !deckWaveform)
+            deckWaveform = cachedWaveform(track->visualKey, track->path);
+        if (player.hasMediaLibrary()) {
+            const auto waveformSource = [&](int index) -> WaveformSource {
+                if (index < 0 || index >= static_cast<int>(player.tracks.size()))
+                    return {};
+                const auto& neighbor = player.tracks[index];
+                if (neighbor.path.empty() || neighbor.missing || neighbor.visualKey == waveformKey)
+                    return {};
+                return {neighbor.visualKey, neighbor.path};
+            };
+            prefetchWaveforms(waveformSource(player.queue.empty() ? -1 : player.queue.front()),
+                              waveformSource(player.history.empty() ? -1 : player.history.back()));
+        }
+    }
+
     if (tab == Tab::Deck) {
         const float slideRemaining = std::max(0.f, 1.f - deckProgressTransition) * progressPhaseSeconds;
         deckProgressTransition = std::min(2.f, deckProgressTransition + progressStep);
         const float timeAfterSlide = std::max(0.f, step - slideRemaining);
         stageCentering = std::min(1.f, stageCentering + timeAfterSlide / stageCenteringSeconds);
+        if (!waveformWasReady)
+            waveformLoadProgress = 0.f;
+        else
+            waveformLoadProgress = std::min(1.f, waveformLoadProgress + timeAfterSlide / progressPhaseSeconds);
     } else {
         deckProgressTransition = std::max(0.f, std::min(1.f, deckProgressTransition) - progressStep);
         stageCentering = std::max(0.f, stageCentering - step / stageCenteringSeconds);
+        waveformLoadProgress = (!local || deckWaveform) ? 1.f : 0.f;
     }
 
     if (scroll > 16.f && utility && !toolFocus && query.empty() && input == Input::None)
@@ -390,8 +423,16 @@ void DeckUi::upper(Draw& d, SDL_Texture* fadeLayer)
     } else {
         drawStage(d, player, meter, stage, stageCentering);
     }
+    std::optional<float> syncPhase;
+    const auto* current = player.track();
+    const bool preparingWaveform = current && !current->path.empty() && !current->missing &&
+                                   !deckWaveform;
+    if (mediaScanning || preparingWaveform) {
+        constexpr Uint64 rotationMs = 1200;
+        syncPhase = static_cast<float>(SDL_GetTicks() % rotationMs) / rotationMs;
+    }
     drawTopChrome(d, player, title, clockString(), batteryPercent, wifiConnected, !bluetooth.connectedDevice().empty(),
-                  std::min(1.f, deckProgressTransition), stageCentering);
+                  syncPhase, std::min(1.f, deckProgressTransition), stageCentering);
     d.rect(fullPanel, alpha(color(0x000000), 1 - backlight()));
 }
 
@@ -406,7 +447,9 @@ void DeckUi::lower(Draw& d)
     }
     d.clear(d.p().bg);
     tabs(d);
-    if (tab == Tab::Deck) {
+    if (!mediaStatus.empty()) {
+        d.label(mediaStatus, {48, 342, 928, 80}, Size::Title, d.p().text, Face::Display, Align::Center, true, true);
+    } else if (tab == Tab::Deck) {
         transport(d);
     } else {
         catalog(d);
@@ -669,7 +712,8 @@ void DeckUi::transport(Draw& d)
     };
     shortcutButton({790, 108, 84, 48}, Action::Context, player.current, "more", "keycap-y", 26, 24, 32, p.elevated, 12);
     shortcutButton({886, 108, 100, 48}, Action::Settings, 0, "settings", "keycap-sel", 46, 24, 32, p.elevated, 12);
-    drawWaveform(d, player, deckWave, smooth(deckProgressTransition - 1.f));
+    drawWaveform(d, player, deckWaveform, deckWave, smooth(deckProgressTransition - 1.f),
+                 smooth(waveformLoadProgress));
     hit(deckWave, Action::Scrub);
 
     button(d, {16, 348, 172, 172}, Action::Previous, 0, "prev", {}, false, false, 48,
@@ -734,6 +778,8 @@ void DeckUi::rebuildCatalogCache() const
     cachedContentHeight = 0;
     cachedUpNextOffset = 0;
     cachedArtistAlbumCount = 0;
+    std::map<std::pair<std::string_view, std::string_view>, size_t> groups;
+    std::set<std::tuple<std::string_view, std::string_view, std::string_view>> artistAlbums;
 
     const auto addTrack = [&](int index, int playlist = -1, bool albumMode = false) {
         const auto& t = player.tracks[index];
@@ -753,11 +799,14 @@ void DeckUi::rebuildCatalogCache() const
     const auto addGroup = [&](int index, Tab type) {
         const auto& t = player.tracks[index];
         const std::string_view name = type == Tab::Albums ? t.album : t.artist;
-        auto match = std::ranges::find(cachedRows, name, &Row::title);
-        if (match == cachedRows.end()) {
+        const std::string_view albumArtist = type == Tab::Albums ? t.albumArtist : std::string_view{};
+        const auto [match, inserted] = groups.try_emplace({name, albumArtist}, cachedRows.size());
+        const bool newArtistAlbum = type == Tab::Artists && artistAlbums.emplace(t.artist, t.album, t.albumArtist).second;
+        if (inserted) {
             Row r;
             r.title = std::string(name);
-            r.subtitle = type == Tab::Albums ? std::string(t.artist) : "";
+            if (type == Tab::Albums)
+                r.subtitle = t.albumArtist.empty() ? t.artist : t.albumArtist;
             r.ids = {index};
             r.cover = index;
             r.track = -1;
@@ -767,16 +816,12 @@ void DeckUi::rebuildCatalogCache() const
             r.added = std::string(t.added);
             cachedRows.push_back(std::move(r));
         } else {
-            if (type == Tab::Artists) {
-                const bool seenAlbum = std::ranges::any_of(match->ids, [&](int prevIdx) {
-                    return player.tracks[prevIdx].album == t.album;
-                });
-                if (!seenAlbum)
-                    ++match->albumCount;
-            }
-            match->ids.push_back(index);
-            if (t.added > match->added)
-                match->added = std::string(t.added);
+            auto& row = cachedRows[match->second];
+            if (newArtistAlbum)
+                ++row.albumCount;
+            row.ids.push_back(index);
+            if (t.added > row.added)
+                row.added = t.added;
         }
     };
 
@@ -786,7 +831,8 @@ void DeckUi::rebuildCatalogCache() const
             for (const int index : detail.ids)
                 addGroup(index, Tab::Albums);
             cachedArtistAlbumCount = static_cast<int>(cachedRows.size());
-            const int maxSongs = std::min<int>(60, static_cast<int>(detail.ids.size()));
+            const int maxSongs = player.hasMediaLibrary() ? static_cast<int>(detail.ids.size())
+                                                          : std::min<int>(60, static_cast<int>(detail.ids.size()));
             for (int i = 0; i < maxSongs; ++i)
                 addTrack(detail.ids[i], -1, false);
         } else if (detail.source == Tab::Albums) {
@@ -1092,7 +1138,8 @@ void DeckUi::catalog(Draw& d)
             d.art(&player.tracks[detail.cover], {112, 99, 74, 74}, 10);
             titleX = 202.f;
             const auto& ct = player.tracks[detail.cover];
-            headerSub = std::string(ct.artist) + " (" + std::to_string(ct.year) + ") — " +
+            const auto year = ct.year > 0 ? " (" + std::to_string(ct.year) + ")" : std::string{};
+            headerSub = std::string(ct.albumArtist.empty() ? ct.artist : ct.albumArtist) + year + " — " +
                         std::to_string(detail.ids.size()) +
                         (detail.ids.size() == 1 ? " track" : " tracks");
         } else if (detail.source == Tab::Playlists) {
@@ -1980,44 +2027,50 @@ void DeckUi::overlay(Draw& d)
 
     if (info) {
         struct InfoRow { std::string_view label; std::string value; bool full; bool mono; bool wrap = false; };
-        int kbps = 1411;
-        std::string digits;
-        for (const char ch : track->bitrate)
-            if (ch >= '0' && ch <= '9') digits.push_back(ch);
-        if (!digits.empty()) kbps = std::max(128, std::stoi(digits));
+        const bool real = !track->path.empty();
+        double bytes = static_cast<double>(track->bytes);
+        if (!real) {
+            std::string digits;
+            for (const char ch : track->bitrate)
+                if (ch >= '0' && ch <= '9') digits.push_back(ch);
+            const int kbps = digits.empty() ? 1411 : std::max(128, std::stoi(digits));
+            bytes = kbps * 1000.0 / 8.0 * track->duration;
+        }
         char sizeBuf[32];
-        std::snprintf(sizeBuf, sizeof(sizeBuf), "%.1f MB", (kbps * 1000.0 / 8.0) * track->duration / (1024.0 * 1024.0));
+        std::snprintf(sizeBuf, sizeof(sizeBuf), "%.1f MB", bytes / (1024.0 * 1024.0));
         const auto ext = std::string(track->format.substr(0, track->format.find(' ')));
         std::string lowerExt = ext;
         for (char& c : lowerExt) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        const std::string depth = track->format.find("24") != std::string_view::npos ? "24-bit"
-                                : track->format.find("16") != std::string_view::npos ? "16-bit"
-                                : std::string("Lossy");
-        const std::string codecKind = lowerExt == "mp3" ? std::string("Lossy")
-                                                        : std::string("Lossless");
-        const std::string filePath = "/mnt/sd2/Music/" + std::string(track->artist) + "/" +
+        const std::string depth = real ? (track->bitDepth > 0 ? std::to_string(track->bitDepth) + "-bit" : "")
+                                : track->format.find("24") != std::string_view::npos ? "24-bit"
+                                : track->format.find("16") != std::string_view::npos ? "16-bit" : "Lossy";
+        const std::string codecKind = (real ? track->lossless : lowerExt != "mp3") ? "Lossless" : "Lossy";
+        const std::string filePath = real ? std::string(track->path) : "/mnt/sd2/Music/" + std::string(track->artist) + "/" +
             std::to_string(track->year) + " - " + std::string(track->album) + "/" +
             twoDigits(track->number) + " - " + std::string(track->title) + "." + lowerExt;
 
-        const InfoRow specs[] = {
+        std::vector<InfoRow> specs{
             {"TITLE", std::string(track->title), true, false, true},
             {"ARTIST", std::string(track->artist), true, false, true},
             {"ALBUM", std::string(track->album), true, false, true},
-            {"YEAR", std::to_string(track->year), false, true},
+            {"YEAR", track->year > 0 ? std::to_string(track->year) : "—", false, true},
             {"TRACK / DISC",
              "Disc " + std::to_string(track->disc) + " / Track " + twoDigits(track->number), false, true},
             {"DURATION", timecode(track->duration), false, true},
             {"FORMAT", std::string(track->format) + " (" + codecKind + ")", false, true},
-            {"SAMPLE RATE", std::string(track->rate) + "  " + depth, false, true},
+            {"SAMPLE RATE", std::string(track->rate) + (depth.empty() ? "" : "  " + depth), false, true},
             {"BITRATE", std::string(track->bitrate), false, true},
-            {"CHANNELS", std::string("Stereo (2.0)"), false, true},
+            {"CHANNELS", real ? std::to_string(track->channels) : "Stereo (2.0)", false, true},
             {"FILE SIZE", sizeBuf, false, true},
-            {"ADDED DATE", std::string(track->added), false, true},
-            {"REPLAYGAIN", "-5.4 dB (Track) / -4.8 dB (Album)", true, true},
-            {"SIGNAL PATH",
-             std::string("ALSA Direct (Bit-Perfect Hardware Output)"), true, false},
-            {"FILE PATH", filePath, true, true},
+            {real ? "MODIFIED DATE" : "ADDED DATE", std::string(real ? track->modified : track->added), false, true},
         };
+        if (!real) {
+            specs.push_back({"REPLAYGAIN", "-5.4 dB (Track) / -4.8 dB (Album)", true, true});
+            specs.push_back({"SIGNAL PATH", "ALSA Direct (Bit-Perfect Hardware Output)", true, false});
+        } else if (track->missing) {
+            specs.push_back({"FILE STATUS", "Missing", true, false});
+        }
+        specs.push_back({"FILE PATH", filePath, true, !real, real});
 
         constexpr float lineHeight = 30.f;
         constexpr float fullWidth = 848.f;
@@ -2139,7 +2192,8 @@ float DeckUi::catalogScrollLimit(float viewHeight, float keyboardPad) const
 }
 
 DeckUi::RowKey::RowKey(const Row& row)
-    : source(row.source), queuePart(row.queuePart), track(row.track), playlist(row.playlist), title(row.title)
+    : source(row.source), queuePart(row.queuePart), track(row.track), playlist(row.playlist), title(row.title),
+      subtitle(row.source == Tab::Albums ? row.subtitle : std::string{})
 {
 }
 
@@ -2151,7 +2205,7 @@ bool DeckUi::RowKey::matches(const Row& row) const
         return row.queuePart == queuePart && (queuePart == QueuePart::Current || row.track == track);
     if (source == Tab::Playlists)
         return row.playlist == playlist;
-    return row.title == title;
+    return row.title == title && (source != Tab::Albums || row.subtitle == subtitle);
 }
 
 DeckUi::CatalogPosition DeckUi::catalogPosition() const
@@ -2536,7 +2590,9 @@ void DeckUi::openAlbum(int index)
     const auto& current = player.tracks[index];
     setTab(static_cast<int>(Tab::Albums));
     const auto& collection = rows();
-    const auto found = std::ranges::find(collection, current.album, &Row::title);
+    const auto found = std::ranges::find_if(collection, [&](const Row& row) {
+        return row.title == current.album && player.tracks[row.cover].albumArtist == current.albumArtist;
+    });
     if (found != collection.end())
         selectRow(static_cast<int>(found - collection.begin()));
 }
@@ -2996,6 +3052,8 @@ void DeckUi::analog(float position)
 
 void DeckUi::toggleLibrary()
 {
+    if (player.hasMediaLibrary())
+        return;
     player.largeLibrary = !player.largeLibrary;
     rowsValid = false;
     for (auto& detail : details)
@@ -3846,6 +3904,16 @@ void DeckUi::useLongMetadataFixture()
     std::erase(player.queue, 2);
     std::erase(player.queue, 3);
     rowsValid = false;
+}
+
+void DeckUi::useMediaLibrary(MediaLibrary library)
+{
+    cancelInput();
+    setTab(static_cast<int>(Tab::Deck));
+    player.setMediaLibrary(std::move(library));
+    rootPositions = {};
+    setTab(static_cast<int>(Tab::Albums));
+    settleTab();
 }
 
 void DeckUi::useBluetoothFixture()
