@@ -9,104 +9,271 @@
   <script defer src="/config.js"></script>
 </head>
 <body class="bg-body-tertiary">
-  <main class="container py-4 py-md-5">
-    <header class="d-flex justify-content-between align-items-center gap-3 border-bottom pb-3 mb-4">
+  <main class="container config-page">
+    <header class="config-header d-flex justify-content-between align-items-center gap-2 border-bottom">
       <img class="deck-logo" src="/logo.svg" alt="DeckDS" width="148" height="44">
-      <div class="d-flex align-items-center gap-3">
+      <div class="d-flex align-items-center gap-2">
         <span id="connection" class="text-body-secondary small" role="status">Connecting…</span>
+        <a id="sign-in" class="btn btn-sm btn-outline-secondary" href="/login" hidden>Sign in</a>
         <a class="btn btn-sm btn-outline-secondary" href="/debug">Debug</a>
       </div>
     </header>
 
-    <div class="row g-3">
-      <section class="col-lg-7" aria-labelledby="library-heading">
-        <div class="card">
-          <div class="card-body p-3 p-sm-4">
-            <div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2">
-              <h1 class="h5 mb-0" id="library-heading">Music Library</h1>
-              <strong id="tracks" class="small font-monospace text-body-secondary"></strong>
+    <div class="config-grid">
+      <div class="config-player">
+        <section class="card" aria-labelledby="now-heading">
+          <div class="card-body">
+            <h1 class="h6 mb-2" id="now-heading">Now Playing</h1>
+            <strong class="track-title" id="track"></strong>
+            <p class="small text-body-secondary text-truncate mb-0" id="artist"></p>
+            <div class="seek-row small font-monospace text-body-secondary">
+              <output id="elapsed" for="seek">0:00</output>
+              <label class="visually-hidden" for="seek">Playback position</label>
+              <input class="form-range" type="range" id="seek" min="0" max="1" step="100" value="0" disabled>
+              <span id="duration">0:00</span>
             </div>
-            <p id="folder" class="small text-break font-monospace text-body-secondary mt-2 mb-3"></p>
-            <div class="row g-2 scan-actions">
-              <div class="col"><button id="quick" class="btn btn-sm btn-primary w-100" type="button" disabled>Quick Scan</button></div>
-              <div class="col"><button id="full" class="btn btn-sm btn-outline-secondary w-100" type="button" disabled>Full Scan</button></div>
-              <div class="col"><button class="btn btn-sm btn-outline-secondary w-100" type="button" disabled>Sync</button></div>
+            <div class="transport-row">
+              <button type="button" class="btn btn-outline-secondary icon-button" id="previous"
+                      aria-label="Previous track" title="Previous track" disabled>
+                <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h2v14H5zM19 5v14L8 12z"/></svg>
+              </button>
+              <button type="button" class="btn btn-primary icon-button" id="playback-toggle" aria-label="Play" title="Play" disabled>
+                <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+                <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>
+              </button>
+              <button type="button" class="btn btn-outline-secondary icon-button" id="next"
+                      aria-label="Next track" title="Next track" disabled>
+                <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 5h2v14h-2zM5 5v14l11-7z"/></svg>
+              </button>
             </div>
-            <div id="scan" class="border-top pt-3 mt-3" hidden>
-              <div class="d-flex justify-content-between gap-3">
-                <span id="scan-mode"></span>
-                <span id="percent" class="font-monospace"></span>
+            <div class="volume-row">
+              <button type="button" class="btn btn-outline-secondary icon-button" id="mute" aria-label="Mute" title="Mute" disabled>
+                <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 9h4l5-4v14l-5-4H3z"/><path d="M15 9a4 4 0 0 1 0 6m2.5-8.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+                </svg>
+                <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true" hidden>
+                  <path d="M3 9h4l5-4v14l-5-4H3z"/><path d="m16 9 6 6m0-6-6 6" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+                </svg>
+              </button>
+              <label class="visually-hidden" for="volume">Volume</label>
+              <input class="form-range" type="range" id="volume" min="0" max="100" value="0" disabled>
+              <output class="font-monospace small text-body-secondary text-end" id="volume-value" for="volume"></output>
+            </div>
+            <p id="playback-error" class="feedback text-danger small mt-2 mb-0" role="alert"></p>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="library-heading">
+          <div class="card-body">
+            <div class="library-title">
+              <h2 class="h6 mb-0" id="library-heading">Music Library</h2>
+              <div class="library-title-status small font-monospace text-body-secondary">
+                <strong id="tracks" class="text-truncate"></strong>
+                <div id="scan" class="library-title-progress" hidden>
+                  <progress max="100" value="0" id="bar" aria-label="Library scan progress"></progress>
+                  <span id="percent" aria-hidden="true"></span>
+                </div>
               </div>
-              <progress class="w-100" max="100" value="0" id="bar" aria-label="Library scan progress"></progress>
-              <p id="count" class="small font-monospace text-body-secondary mb-0"></p>
             </div>
-            <p id="library-message" class="feedback small text-body-secondary mt-3 mb-0" role="status"></p>
-            <section class="border-top pt-3 mt-3" id="review" aria-labelledby="review-heading" hidden>
-              <h2 class="h6" id="review-heading">Missing Files</h2>
+            <p id="folder" class="small text-truncate font-monospace text-body-secondary mt-1 mb-2"></p>
+            <div class="d-flex flex-wrap gap-1 scan-actions">
+              <button id="quick" class="btn btn-sm btn-primary" type="button" disabled>Quick Scan</button>
+              <button id="full" class="btn btn-sm btn-outline-secondary" type="button" disabled>Full Scan</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Sync</button>
+            </div>
+            <p id="library-message" class="library-feedback small text-body-secondary text-truncate mt-2 mb-0" role="status"></p>
+            <section class="border-top pt-2 mt-2" id="review" aria-labelledby="review-heading" hidden>
+              <h3 class="h6 mb-1" id="review-heading">Missing Files</h3>
               <p class="mb-1" id="missing"></p>
-              <p class="small text-body-secondary" id="review-question">Remove the missing entries from the index?</p>
-              <div class="row g-2">
-                <div class="col"><button id="keep" class="btn btn-outline-secondary w-100" type="button">Keep</button></div>
-                <div class="col"><button id="remove" class="btn btn-outline-danger w-100" type="button">Remove</button></div>
+              <p class="small text-body-secondary mb-2" id="review-question">Remove the missing entries from the index?</p>
+              <div class="d-flex gap-2">
+                <button id="keep" class="btn btn-sm btn-outline-secondary flex-fill" type="button">Keep</button>
+                <button id="remove" class="btn btn-sm btn-outline-danger flex-fill" type="button">Remove</button>
               </div>
             </section>
           </div>
-        </div>
-      </section>
-
-      <section class="col-lg-5" aria-labelledby="settings-heading">
-        <div class="card">
-          <div class="card-body p-3 p-sm-4">
-            <h2 class="h5 mb-3" id="settings-heading">Deck Settings</h2>
-            <div class="vstack gap-3">
-              <div class="setting">
-                <label class="form-label mb-0" for="theme">Deck theme</label>
-                <select id="theme" class="form-select" data-setting="theme" disabled>
-                  <option value="0">Obsidian</option><option value="1">Ceramic</option><option value="2">VFD</option>
-                </select>
-              </div>
-              <div class="setting">
-                <label class="form-label mb-0" for="brightness">Screen brightness</label>
-                <select id="brightness" class="form-select" data-setting="brightness" disabled>
-                  <option value="0">15%</option><option value="1">30%</option><option value="2">45%</option>
-                  <option value="3">60%</option><option value="4">75%</option><option value="5">90%</option>
-                  <option value="6">100%</option>
-                </select>
-              </div>
-              <div class="setting">
-                <label class="form-label mb-0" for="clock">Time format</label>
-                <select id="clock" class="form-select" data-setting="clock" disabled>
-                  <option value="0">12-hour</option><option value="1">24-hour</option>
-                </select>
-              </div>
-              <div class="setting">
-                <label class="form-label mb-0" for="sfx">UI sound effects</label>
-                <select id="sfx" class="form-select" data-setting="sfx" disabled>
-                  <option value="0">Mute</option><option value="1">SFX On</option>
-                </select>
-              </div>
-              <div class="setting">
-                <label class="form-label mb-0" for="lid">Lid close</label>
-                <select id="lid" class="form-select" data-setting="lid" disabled>
-                  <option value="0">Pause</option><option value="1">Pocket Audio</option>
-                </select>
+        </section>
+        <section class="card" aria-labelledby="connectivity-heading">
+          <div class="card-body">
+            <h2 class="h6 mb-2" id="connectivity-heading">Connectivity</h2>
+            <div class="d-flex justify-content-between align-items-center gap-2">
+              <span class="small">Wi-Fi</span>
+              <button id="wifi-open" type="button" class="btn btn-sm btn-outline-secondary"
+                      aria-label="Configure Wi-Fi" aria-haspopup="dialog">Config</button>
+            </div>
+            <div class="d-flex justify-content-between align-items-center gap-2 border-top pt-2 mt-2">
+              <span class="small">Bluetooth Audio</span>
+              <div class="scan-tooltip-anchor" id="bluetooth-pair-tooltip">
+                <button id="bluetooth-open" type="button" class="btn btn-sm btn-outline-secondary"
+                        aria-label="Pair Bluetooth audio" aria-haspopup="dialog"
+                        aria-describedby="bluetooth-pair-message">Pair</button>
+                <span id="bluetooth-pair-message" class="scan-tooltip small" role="tooltip"></span>
+                <span id="bluetooth-pair-announcement" class="visually-hidden" role="status"></span>
               </div>
             </div>
-            <p id="settings-error" class="feedback text-danger small mt-3 mb-0" role="alert"></p>
+            <ul id="bluetooth-paired-devices" class="device-list list-unstyled mb-0" aria-label="Paired Bluetooth devices"></ul>
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
 
-      <section class="col-12" aria-labelledby="now-heading">
-        <div class="card">
-          <div class="card-body p-3 p-sm-4">
-            <h2 class="h5" id="now-heading">Now Playing</h2>
-            <strong class="text-break" id="track"></strong>
-            <p class="text-body-secondary text-break mb-0" id="artist"></p>
+      <section class="card" aria-labelledby="settings-heading">
+        <div class="card-body">
+          <h2 class="h6 mb-2" id="settings-heading">Deck Settings</h2>
+          <div class="settings-fields">
+            <div class="setting">
+              <label class="form-label mb-0" for="theme">Deck theme</label>
+              <select id="theme" class="form-select form-select-sm" data-setting="theme" disabled>
+                <option value="0">Obsidian</option><option value="1">Ceramic</option><option value="2">VFD</option>
+              </select>
+            </div>
+            <div class="setting">
+              <label class="form-label mb-0" for="accent">Accent color</label>
+              <select id="accent" class="form-select form-select-sm" data-setting="accent" disabled></select>
+            </div>
+            <div class="setting">
+              <label class="form-label mb-0" for="brightness">Screen brightness</label>
+              <select id="brightness" class="form-select form-select-sm" data-setting="brightness" disabled>
+                <option value="0">15%</option><option value="1">30%</option><option value="2">45%</option>
+                <option value="3">60%</option><option value="4">75%</option><option value="5">90%</option>
+                <option value="6">100%</option>
+              </select>
+            </div>
+            <div class="setting">
+              <label class="form-label mb-0" for="clock">Time format</label>
+              <select id="clock" class="form-select form-select-sm" data-setting="clock" disabled>
+                <option value="0">12-hour</option><option value="1">24-hour</option>
+              </select>
+            </div>
+            <div class="setting">
+              <label class="form-label mb-0" for="sfx">UI sound effects</label>
+              <select id="sfx" class="form-select form-select-sm" data-setting="sfx" disabled>
+                <option value="0">Mute</option><option value="1">SFX On</option>
+              </select>
+            </div>
+            <div class="setting">
+              <label class="form-label mb-0" for="sfx-volume">Sound effects volume</label>
+              <select id="sfx-volume" class="form-select form-select-sm" data-setting="sfxVolume" disabled>
+                <option value="0">Low</option><option value="1">Mid</option><option value="2">High</option>
+              </select>
+            </div>
+            <div class="setting">
+              <label class="form-label mb-0" for="sfx-output">Sound effects output</label>
+              <select id="sfx-output" class="form-select form-select-sm" data-setting="sfxOutput" disabled>
+                <option value="0">Current Output</option><option value="1">Built-in Speaker</option>
+              </select>
+            </div>
+            <div class="setting">
+              <label class="form-label mb-0" for="lid">Lid close</label>
+              <select id="lid" class="form-select form-select-sm" data-setting="lid" disabled>
+                <option value="0">Pause</option><option value="1">Continue Playing</option>
+              </select>
+            </div>
           </div>
+          <p id="settings-error" class="feedback text-danger small mt-2 mb-0" role="alert"></p>
+          <section class="border-top pt-2 mt-2" aria-labelledby="updates-heading">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <h3 class="h6 mb-0 me-auto" id="updates-heading">Updates</h3>
+              <button class="btn btn-sm btn-outline-secondary" type="button" id="ota-edit" disabled>Edit URL</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Update</button>
+            </div>
+            <p class="small text-body-secondary font-monospace text-truncate mt-1 mb-0" id="ota-url">Not set</p>
+          </section>
+          <section class="border-top pt-2 mt-2" aria-labelledby="web-password-heading">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <h3 class="h6 mb-0 me-auto" id="web-password-heading">Web Config Password</h3>
+              <span id="web-password-status" class="text-body-secondary small"></span>
+              <button class="btn btn-sm btn-outline-secondary" type="button" id="web-password-edit" disabled>Edit</button>
+            </div>
+          </section>
         </div>
       </section>
     </div>
   </main>
+  <dialog id="ota-dialog" aria-labelledby="ota-heading">
+    <form id="ota-form" class="p-3 p-sm-4">
+      <h2 class="h5 mb-3" id="ota-heading">Edit OTA URL</h2>
+      <label class="form-label" for="ota-input">OTA URL</label>
+      <input class="form-control" id="ota-input" type="url" maxlength="2048" spellcheck="false" autofocus>
+      <p id="ota-error" class="feedback text-danger small mt-2 mb-0" role="alert"></p>
+      <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-outline-secondary" type="button" id="ota-cancel">Cancel</button>
+        <button class="btn btn-primary" type="submit" id="ota-save">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="web-password-dialog" aria-labelledby="web-password-dialog-title">
+    <form id="web-password-form" class="p-3 p-sm-4">
+      <h2 class="h5 mb-3" id="web-password-dialog-title">Web Config Password</h2>
+      <label class="form-label" for="web-password-input">Password</label>
+      <input class="form-control" id="web-password-input" type="password" maxlength="128" autocomplete="off" autofocus>
+      <p id="web-password-error" class="feedback text-danger small mt-2 mb-0" role="alert"></p>
+      <div class="d-flex flex-wrap justify-content-end gap-2 mt-3">
+        <button class="btn btn-outline-secondary" type="button" id="web-password-cancel">Cancel</button>
+        <button class="btn btn-primary" type="submit" id="web-password-save">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="wifi-dialog" class="connectivity-dialog" aria-labelledby="wifi-dialog-title">
+    <div id="wifi-browser" class="p-3 p-sm-4">
+      <header class="d-flex justify-content-between align-items-center gap-2 mb-2">
+        <h2 class="h5 mb-0" id="wifi-dialog-title">Wi-Fi</h2>
+        <button id="wifi-close" type="button" class="btn btn-sm btn-outline-secondary" autofocus>Close</button>
+      </header>
+      <div class="d-flex justify-content-between align-items-center gap-2">
+        <div id="wifi-link" class="wifi-link small">
+          <!-- Bootstrap Icons v1.13.1, MIT. See vendor/BOOTSTRAP-ICONS-LICENSE. -->
+          <svg class="bi bi-wifi-off" data-level="off" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M10.706 3.294A12.6 12.6 0 0 0 8 3C5.259 3 2.723 3.882.663 5.379a.485.485 0 0 0-.048.736.52.52 0 0 0 .668.05A11.45 11.45 0 0 1 8 4q.946 0 1.852.148zM8 6c-1.905 0-3.68.56-5.166 1.526a.48.48 0 0 0-.063.745.525.525 0 0 0 .652.065 8.45 8.45 0 0 1 3.51-1.27zm2.596 1.404.785-.785q.947.362 1.785.907a.482.482 0 0 1 .063.745.525.525 0 0 1-.652.065 8.5 8.5 0 0 0-1.98-.932zM8 10l.933-.933a6.5 6.5 0 0 1 2.013.637c.285.145.326.524.1.75l-.015.015a.53.53 0 0 1-.611.09A5.5 5.5 0 0 0 8 10m4.905-4.905.747-.747q.886.451 1.685 1.03a.485.485 0 0 1 .047.737.52.52 0 0 1-.668.05 11.5 11.5 0 0 0-1.811-1.07M9.02 11.78c.238.14.236.464.04.66l-.707.706a.5.5 0 0 1-.707 0l-.707-.707c-.195-.195-.197-.518.04-.66A2 2 0 0 1 8 11.5c.374 0 .723.102 1.021.28zm4.355-9.905a.53.53 0 0 1 .75.75l-10.75 10.75a.53.53 0 0 1-.75-.75z"/>
+          </svg>
+          <svg class="bi bi-wifi-1" data-level="1" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" hidden>
+            <path d="M11.046 10.454c.226-.226.185-.605-.1-.75A6.5 6.5 0 0 0 8 9c-1.06 0-2.062.254-2.946.704-.285.145-.326.524-.1.75l.015.015c.16.16.407.19.611.09A5.5 5.5 0 0 1 8 10c.868 0 1.69.201 2.42.56.203.1.45.07.611-.091zM9.06 12.44c.196-.196.198-.52-.04-.66A2 2 0 0 0 8 11.5a2 2 0 0 0-1.02.28c-.238.14-.236.464-.04.66l.706.706a.5.5 0 0 0 .707 0l.708-.707z"/>
+          </svg>
+          <svg class="bi bi-wifi-2" data-level="2" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" hidden>
+            <path d="M13.229 8.271c.216-.216.194-.578-.063-.745A9.46 9.46 0 0 0 8 6c-1.905 0-3.68.56-5.166 1.526a.48.48 0 0 0-.063.745.525.525 0 0 0 .652.065A8.46 8.46 0 0 1 8 7a8.46 8.46 0 0 1 4.577 1.336c.205.132.48.108.652-.065m-2.183 2.183c.226-.226.185-.605-.1-.75A6.5 6.5 0 0 0 8 9c-1.06 0-2.062.254-2.946.704-.285.145-.326.524-.1.75l.015.015c.16.16.408.19.611.09A5.5 5.5 0 0 1 8 10c.868 0 1.69.201 2.42.56.203.1.45.07.611-.091zM9.06 12.44c.196-.196.198-.52-.04-.66A2 2 0 0 0 8 11.5a2 2 0 0 0-1.02.28c-.238.14-.236.464-.04.66l.706.706a.5.5 0 0 0 .708 0l.707-.707z"/>
+          </svg>
+          <svg class="bi bi-wifi" data-level="3" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" hidden>
+            <path d="M15.384 6.115a.485.485 0 0 0-.047-.736A12.44 12.44 0 0 0 8 3C5.259 3 2.723 3.882.663 5.379a.485.485 0 0 0-.048.736.52.52 0 0 0 .668.05A11.45 11.45 0 0 1 8 4c2.507 0 4.827.802 6.716 2.164.205.148.49.13.668-.049"/>
+            <path d="M13.229 8.271a.482.482 0 0 0-.063-.745A9.46 9.46 0 0 0 8 6c-1.905 0-3.68.56-5.166 1.526a.48.48 0 0 0-.063.745.525.525 0 0 0 .652.065A8.46 8.46 0 0 1 8 7a8.46 8.46 0 0 1 4.576 1.336c.206.132.48.108.653-.065m-2.183 2.183c.226-.226.185-.605-.1-.75A6.5 6.5 0 0 0 8 9c-1.06 0-2.062.254-2.946.704-.285.145-.326.524-.1.75l.015.015c.16.16.407.19.611.09A5.5 5.5 0 0 1 8 10c.868 0 1.69.201 2.42.56.203.1.45.07.61-.091zM9.06 12.44c.196-.196.198-.52-.04-.66A2 2 0 0 0 8 11.5a2 2 0 0 0-1.02.28c-.238.14-.236.464-.04.66l.706.706a.5.5 0 0 0 .707 0l.707-.707z"/>
+          </svg>
+          <span id="wifi-name" class="text-truncate">Not connected</span>
+          <span id="wifi-strength" class="text-body-secondary" hidden></span>
+        </div>
+        <button id="wifi-scan" type="button" class="btn btn-sm btn-outline-secondary" disabled>Scan</button>
+      </div>
+      <p id="wifi-message" class="wifi-feedback small text-body-secondary mt-2 mb-0" role="status"></p>
+      <ul id="wifi-networks" class="device-list list-unstyled mb-0"></ul>
+    </div>
+    <form id="wifi-form" class="p-3 p-sm-4" hidden>
+      <h2 class="h5 mb-2" id="wifi-join-title">Join Wi-Fi Network</h2>
+      <p id="wifi-target" class="device-name fw-semibold mb-2"></p>
+      <p class="text-body-secondary small mb-3">Changing networks may disconnect this page.</p>
+      <div id="wifi-password-field">
+        <label class="form-label" for="wifi-password">Wi-Fi password</label>
+        <input class="form-control" id="wifi-password" type="password" maxlength="128" autocomplete="off">
+      </div>
+      <p id="wifi-join-error" class="feedback text-danger small mt-2 mb-0" role="alert"></p>
+      <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-outline-secondary" type="button" id="wifi-cancel">Back</button>
+        <button class="btn btn-primary" type="submit" id="wifi-join">Join</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="bluetooth-dialog" class="connectivity-dialog" aria-labelledby="bluetooth-heading">
+    <div class="p-3 p-sm-4">
+      <header class="d-flex justify-content-between align-items-center gap-2 mb-2">
+        <h2 class="h5 mb-0" id="bluetooth-heading">Bluetooth Audio</h2>
+        <button id="bluetooth-close" type="button" class="btn btn-sm btn-outline-secondary" autofocus>Close</button>
+      </header>
+      <div class="d-flex justify-content-end mb-2">
+        <div class="scan-tooltip-anchor" id="bluetooth-scan-tooltip">
+          <button id="bluetooth-scan" type="button" class="btn btn-sm btn-outline-secondary"
+                  aria-disabled="true" aria-describedby="bluetooth-message">Scan</button>
+          <span id="bluetooth-message" class="scan-tooltip small" role="tooltip"></span>
+        </div>
+      </div>
+      <span id="bluetooth-announcement" class="visually-hidden" role="status"></span>
+      <ul id="bluetooth-devices" class="device-list list-unstyled mb-0"></ul>
+    </div>
+  </dialog>
 </body>
 </html>

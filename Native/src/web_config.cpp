@@ -1,13 +1,39 @@
 #include "web_config.hpp"
 
+#include <algorithm>
+
+bool validOtaUrl(std::string_view url)
+{
+    if (url.empty())
+        return true;
+    if (url.size() > otaUrlLimit || std::ranges::any_of(url, [](unsigned char ch) {
+            return ch <= ' ' || ch >= 127 || ch == '\\';
+        }))
+        return false;
+    const auto separator = url.find("://");
+    if (separator == std::string_view::npos)
+        return false;
+    const auto scheme = url.substr(0, separator);
+    const auto sameLetter = [](char lower, char actual) {
+        return lower == actual || lower - 'a' + 'A' == actual;
+    };
+    if (!std::ranges::equal(std::string_view("https"), scheme, sameLetter) &&
+        !std::ranges::equal(std::string_view("http"), scheme, sameLetter))
+        return false;
+    const auto endpoint = url.substr(separator + 3);
+    const auto authority = endpoint.substr(0, endpoint.find_first_of("/?#"));
+    const auto userInfo = authority.rfind('@');
+    const auto host = userInfo == std::string_view::npos ? authority : authority.substr(userInfo + 1);
+    return !host.empty() && host.front() != ':';
+}
+
 #if defined(DECKDS_WEB_CONFIG)
+#include "web_password.hpp"
+
 #include <arpa/inet.h>
-#include <ifaddrs.h>
 #include <microhttpd.h>
-#include <net/if.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <charconv>
 #include <cctype>
 #include <cmath>
@@ -24,29 +50,14 @@ namespace {
 constexpr unsigned short port = 8080;
 constexpr size_t requestLimit = 256;
 constexpr size_t commandLimit = 24;
-constexpr std::array<std::string_view, 5> settingNames{"theme", "brightness", "clock", "sfx", "lid"};
-constexpr std::array<int, 5> settingMax{2, 6, 1, 1, 1};
-
-std::string lanAddress()
-{
-    ifaddrs* interfaces = nullptr;
-    if (getifaddrs(&interfaces) != 0)
-        return {};
-    const std::unique_ptr<ifaddrs, decltype(&freeifaddrs)> addresses(interfaces, freeifaddrs);
-    for (auto* entry = interfaces; entry; entry = entry->ifa_next) {
-        if (!entry->ifa_addr || entry->ifa_addr->sa_family != AF_INET || !(entry->ifa_flags & IFF_UP) ||
-            (entry->ifa_flags & (IFF_LOOPBACK | IFF_POINTOPOINT)))
-            continue;
-        const auto& address = reinterpret_cast<const sockaddr_in*>(entry->ifa_addr)->sin_addr;
-        const auto ip = ntohl(address.s_addr);
-        if ((ip >> 24) != 10 && (ip >> 20) != 0xac1 && (ip >> 16) != 0xc0a8)
-            continue;
-        char text[INET_ADDRSTRLEN]{};
-        if (inet_ntop(AF_INET, &address, text, sizeof(text)))
-            return text;
-    }
-    return {};
-}
+constexpr std::string_view otaUrlPath = "/api/ota/url";
+constexpr std::string_view passwordPath = "/api/access/password";
+constexpr std::string_view loginPath = "/api/access/login";
+constexpr auto sessionCookie = "deckds_session";
+constexpr std::array<std::string_view, static_cast<size_t>(WebSetting::Count)> settingNames{
+    "theme", "brightness", "clock", "sfx", "lid", "accent", "sfxVolume", "sfxOutput"};
+constexpr std::array<int, settingNames.size()> settingMax{2, 6, 1, 1, 1, 3, 2, 1};
+constexpr std::array<std::string_view, 7> playbackNames{"previous", "play", "pause", "next", "seek", "volume", "mute"};
 
 bool acceptsHost(MHD_Connection* connection, std::string_view host, std::string_view machineHost)
 {
@@ -93,6 +104,8 @@ void writeScan(std::ostream& output, const std::optional<WebConfigState::Scan>& 
     }
 }
 
+void writeConnectivity(std::ostream& output, const WebConfigState& state);
+
 std::string json(const WebConfigState& state)
 {
     std::ostringstream output;
@@ -110,7 +123,16 @@ std::string json(const WebConfigState& state)
             output << ',';
         output << jsonString(settingNames[i]) << ':' << state.settings[i];
     }
-    output << "}}";
+    const auto& playback = state.playback;
+    output << "},\"playback\":{\"trackId\":" << jsonString(playback.trackId)
+           << ",\"positionMs\":" << playback.positionMs << ",\"durationMs\":" << playback.durationMs
+           << ",\"volume\":" << playback.volume << ",\"available\":" << playback.available
+           << ",\"playing\":" << playback.playing << ",\"muted\":" << playback.muted
+           << ",\"canPlay\":" << playback.canPlay << ",\"canPrevious\":" << playback.canPrevious
+           << ",\"canNext\":" << playback.canNext << "},\"ota\":{\"url\":" << jsonString(state.ota.url)
+           << ",\"revision\":" << state.ota.revision << ",\"error\":" << jsonString(state.ota.error) << '}';
+    writeConnectivity(output, state);
+    output << '}';
     return std::move(output).str();
 }
 
@@ -124,6 +146,43 @@ void writeArray(std::ostream& output, const Range& values, Write write)
         write(values[i]);
     }
     output << ']';
+}
+
+void writeConnectivity(std::ostream& output, const WebConfigState& state)
+{
+    output << ",\"accents\":";
+    writeArray(output, state.accents, [&](const auto name) { output << jsonString(name); });
+    const auto& wifi = state.wifi;
+    output << ",\"wifi\":{\"supported\":" << wifi.supported << ",\"busy\":" << wifi.busy
+           << ",\"connected\":" << wifi.connected << ",\"error\":" << wifi.error
+           << ",\"message\":" << jsonString(wifi.message) << ",\"accessPoint\":";
+    if (wifi.accessPoint) {
+        output << "{\"name\":" << jsonString(wifi.accessPoint->name) << ",\"strength\":";
+        if (wifi.accessPoint->strength)
+            output << *wifi.accessPoint->strength;
+        else
+            output << "null";
+        output << '}';
+    } else {
+        output << "null";
+    }
+    output << ",\"networks\":";
+    writeArray(output, wifi.networks, [&](const WifiNetwork& network) {
+        constexpr std::array securityNames{"open", "personal", "sae", "other"};
+        output << "{\"id\":" << jsonString(network.id) << ",\"name\":" << jsonString(network.name)
+               << ",\"security\":" << jsonString(securityNames[static_cast<size_t>(network.security)])
+               << ",\"strength\":" << network.strength << ",\"connected\":" << network.connected << '}';
+    });
+    const auto& bluetooth = state.bluetooth;
+    output << "},\"bluetooth\":{\"supported\":" << bluetooth.supported << ",\"busy\":" << bluetooth.busy
+           << ",\"scanning\":" << bluetooth.scanning << ",\"demo\":" << bluetooth.demo
+           << ",\"error\":" << bluetooth.error << ",\"message\":" << jsonString(bluetooth.message)
+           << ",\"devices\":";
+    writeArray(output, bluetooth.devices, [&](const WebConfigState::Bluetooth::Device& device) {
+        output << "{\"id\":" << jsonString(device.id) << ",\"name\":" << jsonString(device.name)
+               << ",\"paired\":" << device.paired << ",\"connected\":" << device.connected << '}';
+    });
+    output << '}';
 }
 
 std::string debugJson(const WebDebugState& state)
@@ -216,7 +275,8 @@ std::string_view header(MHD_Connection* connection, const char* name)
     return value ? std::string_view(value) : std::string_view{};
 }
 
-MHD_Result respond(MHD_Connection* connection, unsigned status, std::string_view type, std::string_view body)
+MHD_Result respond(MHD_Connection* connection, unsigned status, std::string_view type, std::string_view body,
+                   const char* extraHeader = nullptr, std::string_view extraValue = {})
 {
     auto* response = MHD_create_response_from_buffer(body.size(), const_cast<char*>(body.data()), MHD_RESPMEM_MUST_COPY);
     if (!response)
@@ -225,6 +285,8 @@ MHD_Result respond(MHD_Connection* connection, unsigned status, std::string_view
     MHD_add_response_header(response, "Cache-Control", "no-store");
     MHD_add_response_header(response, "X-Content-Type-Options", "nosniff");
     MHD_add_response_header(response, "Referrer-Policy", "no-referrer");
+    if (extraHeader)
+        MHD_add_response_header(response, extraHeader, extraValue.data());
     MHD_add_response_header(response, "Content-Security-Policy",
         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
         "frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
@@ -236,6 +298,20 @@ MHD_Result respond(MHD_Connection* connection, unsigned status, std::string_view
 MHD_Result errorResponse(MHD_Connection* connection, unsigned status, std::string_view message)
 {
     return respond(connection, status, "application/json", "{\"error\":" + jsonString(message) + "}");
+}
+
+bool passwordText(std::string_view value)
+{
+    return value.size() <= WebPassword::limit && std::ranges::none_of(value, [](unsigned char character) {
+        return character < 32 || character == 127;
+    });
+}
+
+std::string rememberSession(std::string_view token)
+{
+    // Browsers cap persistent cookies. Renew the cookie each time a protected page opens.
+    return std::string(sessionCookie) + '=' + std::string(token) +
+           "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" + (token.empty() ? "0" : "34560000");
 }
 
 struct Request {
@@ -251,8 +327,90 @@ struct WebConfig::Server {
     std::string state = json({});
     std::string debugState;
     std::vector<WebConfigCommand> commands;
+    std::string playbackTrackId;
     bool canScan = false;
     uint64_t activeReview = 0;
+    WebPassword password;
+    bool wifiSupported = false, wifiBusy = false, bluetoothSupported = false, bluetoothBusy = false, bluetoothScanning = false;
+    std::vector<WifiNetwork> wifiNetworks;
+    std::vector<WebConfigState::Bluetooth::Device> bluetoothDevices;
+
+    MHD_Result signIn(MHD_Connection* connection, std::string_view body)
+    {
+        if (!password.enabled())
+            return respond(connection, 200, "application/json", "{}");
+        if (!passwordText(body) || !password.matches(body))
+            return errorResponse(connection, 401, "Incorrect password.");
+        const auto token = password.newSession();
+        if (token.empty())
+            return errorResponse(connection, 500, "DeckDS could not start a session.");
+        return respond(connection, 200, "application/json", "{}", "Set-Cookie", rememberSession(token));
+    }
+
+    MHD_Result accessPassword(MHD_Connection* connection, std::string_view method, std::string_view body)
+    {
+        if (method == "POST") {
+            if (!passwordText(body))
+                return errorResponse(connection, 400, "Use up to 128 bytes without control characters.");
+            if (!password.save(body))
+                return errorResponse(connection, 500, "DeckDS could not save the Web Config password.");
+            const auto token = password.newSession();
+            if (password.enabled() && token.empty())
+                return errorResponse(connection, 500, "Password saved. Sign in again.");
+            return respond(connection, 200, "application/json", password.enabled() ? "{\"enabled\":true}" : "{\"enabled\":false}",
+                           "Set-Cookie", rememberSession(token));
+        }
+        return respond(connection, 200, "application/json", password.enabled() ? "{\"enabled\":true}" : "{\"enabled\":false}");
+    }
+
+    MHD_Result networkCommand(MHD_Connection* connection, std::string_view path, std::string_view body)
+    {
+        using Type = WebConfigCommand::Type;
+        const bool wifi = path.starts_with("/api/wifi/");
+        const auto action = path.substr(wifi ? std::string_view("/api/wifi/").size() :
+                                              std::string_view("/api/bluetooth/").size());
+        if (!(wifi ? wifiSupported : bluetoothSupported))
+            return errorResponse(connection, 503, wifi ? "Wi-Fi setup is unavailable." : "Bluetooth setup is unavailable.");
+        const bool queued = std::ranges::any_of(commands, [wifi](const auto& command) {
+            if (wifi)
+                return command.type == Type::WifiScan || command.type == Type::WifiConnect;
+            return command.type == Type::BluetoothRefreshPaired || command.type == Type::BluetoothScan || command.type == Type::BluetoothConnect ||
+                   command.type == Type::BluetoothForget;
+        });
+        if (queued || (wifi ? wifiBusy : bluetoothBusy || (bluetoothScanning && (action == "scan" || action == "paired"))))
+            return errorResponse(connection, 409, wifi ? "Wi-Fi is busy." : "Bluetooth is busy.");
+
+        if (action == "scan" && body.empty()) {
+            commands.push_back({wifi ? Type::WifiScan : Type::BluetoothScan});
+        } else if (!wifi && action == "paired" && body.empty()) {
+            commands.push_back({Type::BluetoothRefreshPaired});
+        } else if (wifi && action == "connect") {
+            const auto separator = body.find('\n');
+            if (separator == std::string_view::npos || !passwordText(body.substr(separator + 1)))
+                return errorResponse(connection, 400, "Invalid Wi-Fi connection request.");
+            const auto network = std::ranges::find(wifiNetworks, body.substr(0, separator), &WifiNetwork::id);
+            if (network == wifiNetworks.end() || network->connected)
+                return errorResponse(connection, 409, "This network is no longer available to join. Scan again.");
+            if (network->security == WifiNetwork::Security::Other)
+                return errorResponse(connection, 400, "This network uses an unsupported security type.");
+            WebConfigCommand command{Type::WifiConnect};
+            command.target = network->id;
+            command.wifiPassword = body.substr(separator + 1);
+            commands.push_back(std::move(command));
+        } else if (!wifi && (action == "connect" || action == "forget")) {
+            const bool forget = action == "forget";
+            const auto device = std::ranges::find(bluetoothDevices, body, &WebConfigState::Bluetooth::Device::id);
+            if (device == bluetoothDevices.end() || (forget ? !device->paired : device->connected))
+                return errorResponse(connection, 409, "This Bluetooth device is no longer available for that action.");
+            WebConfigCommand command{forget ? Type::BluetoothForget : Type::BluetoothConnect};
+            command.target = device->id;
+            commands.push_back(std::move(command));
+        } else {
+            return errorResponse(connection, 404, "Network control not found.");
+        }
+        (wifi ? wifiBusy : bluetoothBusy) = true;
+        return respond(connection, 202, "application/json", "{}");
+    }
 
     static void complete(void*, MHD_Connection*, void** request, MHD_RequestTerminationCode)
     {
@@ -270,7 +428,8 @@ struct WebConfig::Server {
         auto& context = *static_cast<Request*>(*request);
         try {
             if (*size) {
-                context.tooLarge = context.tooLarge || *size > requestLimit - context.body.size();
+                const auto limit = url == otaUrlPath ? otaUrlLimit : requestLimit;
+                context.tooLarge = context.tooLarge || *size > limit - context.body.size();
                 if (!context.tooLarge)
                     context.body.append(data, *size);
                 *size = 0;
@@ -288,21 +447,36 @@ struct WebConfig::Server {
     {
         const auto requestHost = header(connection, "Host");
         if (!acceptsHost(connection, requestHost, machineHost))
-            return errorResponse(connection, 403, "Open the address shown on DeckDS.");
+            return errorResponse(connection, 403, "Open Web Config using the DeckDS IP address and port 8080.");
+        const char* cookie = MHD_lookup_connection_value(connection, MHD_COOKIE_KIND, sessionCookie);
+        const std::string_view token = cookie ? cookie : "";
+        const bool authorized = !password.enabled() || password.acceptsSession(token);
         if (method == "GET") {
-            if (path == "/") return respond(connection, 200, "text/html; charset=utf-8", indexHtml);
-            if (path == "/debug") return respond(connection, 200, "text/html; charset=utf-8", debugHtml);
+            if (path == "/" || path == "/debug") {
+                if (!authorized)
+                    return respond(connection, 303, "text/plain", "", "Location", path == "/debug" ? "/login?next=debug" : "/login");
+                const auto page = path == "/" ? indexHtml : debugHtml;
+                if (password.enabled())
+                    return respond(connection, 200, "text/html; charset=utf-8", page, "Set-Cookie", rememberSession(token));
+                return respond(connection, 200, "text/html; charset=utf-8", page);
+            }
+            if (path == "/login") {
+                if (authorized)
+                    return respond(connection, 303, "text/plain", "", "Location", "/");
+                return respond(connection, 200, "text/html; charset=utf-8", loginHtml);
+            }
             if (path == "/bootstrap.min.css") return respond(connection, 200, "text/css; charset=utf-8", bootstrapCss);
             if (path == "/config.css") return respond(connection, 200, "text/css; charset=utf-8", pageStyle);
             if (path == "/config.js") return respond(connection, 200, "text/javascript; charset=utf-8", pageScript);
             if (path == "/debug.js") return respond(connection, 200, "text/javascript; charset=utf-8", debugScript);
+            if (path == "/login.js") return respond(connection, 200, "text/javascript; charset=utf-8", loginScript);
             if (path == "/logo.svg") return respond(connection, 200, "image/svg+xml", logoSvg);
         } else if (method == "POST") {
             if (path == "/api/debug")
                 return errorResponse(connection, 405, "Debug is read-only.");
             const auto origin = header(connection, "Origin");
             if (!origin.empty() && origin != "http://" + std::string(requestHost))
-                return errorResponse(connection, 403, "Open the address shown on DeckDS.");
+                return errorResponse(connection, 403, "Send changes from the DeckDS Web Config page.");
             const auto type = header(connection, "Content-Type");
             if (type.substr(0, type.find(';')) != "text/plain")
                 return errorResponse(connection, 415, "Expected plain text.");
@@ -312,6 +486,15 @@ struct WebConfig::Server {
 
         if (!path.starts_with("/api/"))
             return errorResponse(connection, 404, "Page not found.");
+        if (path == loginPath) {
+            if (method == "POST")
+                return signIn(connection, body);
+            return errorResponse(connection, 405, "Method is unavailable.");
+        }
+        if (!authorized)
+            return errorResponse(connection, 401, "Sign in to Web Config.");
+        if (path == passwordPath)
+            return accessPassword(connection, method, body);
         const std::lock_guard lock(mutex);
         if (method == "GET") {
             if (path == "/api/state")
@@ -346,14 +529,63 @@ struct WebConfig::Server {
                 return errorResponse(connection, 409, "That scan has already been reviewed.");
             commands.push_back({choice == "keep" ? Type::KeepMissing : Type::RemoveMissing, *review});
             activeReview = 0;
+        } else if (path == otaUrlPath) {
+            if (!validOtaUrl(body))
+                return errorResponse(connection, 400, "Enter a valid HTTP or HTTPS URL.");
+            WebConfigCommand command{Type::OtaUrl};
+            command.otaUrl = body;
+            commands.push_back(std::move(command));
+        } else if (path.starts_with("/api/wifi/") || path.starts_with("/api/bluetooth/")) {
+            return networkCommand(connection, path, body);
         } else if (path.starts_with("/api/settings/")) {
             const auto name = path.substr(std::string_view("/api/settings/").size());
             const auto position = std::ranges::find(settingNames, name);
-            const auto value = number<int>(body);
             const size_t index = position - settingNames.begin();
-            if (position == settingNames.end() || !value || *value < 0 || *value > settingMax[index])
+            if (position == settingNames.end())
+                return errorResponse(connection, 400, "That setting is unavailable.");
+            const auto setting = static_cast<WebSetting>(index);
+            int theme = 0;
+            if (setting == WebSetting::Accent) {
+                const auto separator = body.find(':');
+                const auto targetTheme = number<int>(body.substr(0, separator));
+                if (separator == std::string_view::npos || !targetTheme || *targetTheme < 0 || *targetTheme > settingMax[0])
+                    return errorResponse(connection, 400, "That theme is unavailable.");
+                theme = *targetTheme;
+                body.remove_prefix(separator + 1);
+            }
+            const auto value = number<int>(body);
+            if (!value || *value < 0 || *value > settingMax[index])
                 return errorResponse(connection, 400, "That setting value is unavailable.");
-            commands.push_back({Type::Setting, 0, static_cast<WebSetting>(index), *value});
+            WebConfigCommand command{Type::Setting, 0, setting, *value};
+            command.theme = theme;
+            commands.push_back(std::move(command));
+        } else if (path.starts_with("/api/playback/")) {
+            const auto name = path.substr(std::string_view("/api/playback/").size());
+            const auto position = std::ranges::find(playbackNames, name);
+            if (position == playbackNames.end())
+                return errorResponse(connection, 404, "Playback control not found.");
+            using Action = WebPlaybackCommand::Action;
+            WebConfigCommand command{Type::Playback};
+            command.playback.action = static_cast<Action>(position - playbackNames.begin());
+            if (command.playback.action == Action::Seek) {
+                const auto split = body.rfind(':');
+                const auto offset = split == std::string_view::npos ? std::nullopt : number<int64_t>(body.substr(split + 1));
+                if (split == 0 || !offset || *offset < 0)
+                    return errorResponse(connection, 400, "Expected the track ID and a position in milliseconds.");
+                if (body.substr(0, split) != playbackTrackId)
+                    return errorResponse(connection, 409, "The track changed. Seek again on the current track.");
+                command.playback.trackId = body.substr(0, split);
+                command.playback.value = *offset;
+            } else if (command.playback.action == Action::Volume || command.playback.action == Action::Mute) {
+                const auto value = number<int>(body);
+                const int maximum = command.playback.action == Action::Mute ? 1 : 100;
+                if (!value || *value < 0 || *value > maximum)
+                    return errorResponse(connection, 400, "That audio setting is out of range.");
+                command.playback.value = *value;
+            } else if (!body.empty()) {
+                return errorResponse(connection, 400, "This playback control takes an empty request.");
+            }
+            commands.push_back(std::move(command));
         } else {
             return errorResponse(connection, 404, "Page not found.");
         }
@@ -365,20 +597,15 @@ WebConfig::WebConfig() : server(std::make_unique<Server>()) {}
 WebConfig::~WebConfig() { stop(); }
 bool WebConfig::supported() { return true; }
 bool WebConfig::running() const { return server->daemon != nullptr; }
-std::string WebConfig::address() const
-{
-    if (!running())
-        return {};
-    auto ip = lanAddress();
-    if (ip.empty())
-        ip = "127.0.0.1";
-    return "http://" + ip + ':' + std::to_string(port);
-}
 std::string WebConfig::error() const { return server->failure; }
 
-bool WebConfig::start()
+bool WebConfig::start(const std::filesystem::path& preferences)
 {
     stop();
+    if (!server->password.load(preferences)) {
+        server->failure = "Unable to read the Web Config password settings";
+        return false;
+    }
     char machine[256]{};
     if (gethostname(machine, sizeof(machine) - 1) == 0 && *machine) {
         server->machineHost = machine;
@@ -410,8 +637,13 @@ void WebConfig::stop()
     server->machineHost.clear();
     server->failure.clear();
     server->commands.clear();
+    server->playbackTrackId.clear();
     server->canScan = false;
     server->activeReview = 0;
+    server->wifiSupported = server->wifiBusy = false;
+    server->bluetoothSupported = server->bluetoothBusy = server->bluetoothScanning = false;
+    server->wifiNetworks.clear();
+    server->bluetoothDevices.clear();
     server->state = json({});
     server->debugState.clear();
 }
@@ -421,8 +653,16 @@ void WebConfig::publish(const WebConfigState& state)
     auto encoded = json(state);
     const std::lock_guard lock(server->mutex);
     server->state = std::move(encoded);
+    server->playbackTrackId = state.playback.trackId;
     server->canScan = state.canScan;
     server->activeReview = state.removing || state.missing == 0 ? 0 : state.review;
+    server->wifiSupported = state.wifi.supported;
+    server->wifiBusy = state.wifi.busy;
+    server->wifiNetworks = state.wifi.networks;
+    server->bluetoothSupported = state.bluetooth.supported;
+    server->bluetoothBusy = state.bluetooth.busy;
+    server->bluetoothScanning = state.bluetooth.scanning;
+    server->bluetoothDevices = state.bluetooth.devices;
 }
 
 void WebConfig::publishDebug(const WebDebugState& state)
@@ -443,9 +683,8 @@ WebConfig::WebConfig() = default;
 WebConfig::~WebConfig() = default;
 bool WebConfig::supported() { return false; }
 bool WebConfig::running() const { return false; }
-bool WebConfig::start() { return false; }
+bool WebConfig::start(const std::filesystem::path&) { return false; }
 void WebConfig::stop() {}
-std::string WebConfig::address() const { return {}; }
 std::string WebConfig::error() const { return {}; }
 void WebConfig::publish(const WebConfigState&) {}
 void WebConfig::publishDebug(const WebDebugState&) {}

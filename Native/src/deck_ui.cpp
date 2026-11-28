@@ -1823,11 +1823,6 @@ void DeckUi::overlay(Draw& d)
         const std::string_view settingsHeading = "Deck Settings";
         const auto titleW = d.textWidth(settingsHeading, Size::Title, Face::Display, true);
         d.label(settingsHeading, {114, 92, titleW + 8, 88}, Size::Title, p.text, Face::Display, Align::Left, true);
-        if (!webAddress.empty() || !webError.empty()) {
-            d.label("Web Config", {430, 104, 552, 28}, Size::Caption, p.dim, Face::Display, Align::Right);
-            d.label(webAddress.empty() ? webError : webAddress, {430, 132, 552, 34},
-                    Size::Sub, p.text, Face::Mono, Align::Right, true, true);
-        }
 
         settingsBox = {12, 192, 924, 560};
         settingsLimit = std::max(0.f, 4.f + settingsContentHeight() + 16.f - settingsBox.h);
@@ -1944,7 +1939,7 @@ void DeckUi::overlay(Draw& d)
 
         cy = sy + settingsRowOffset(LidCloseRow);
         card({16, cy, 916, settingsRowHeight}, "LID CLOSE (HALL)", LidCloseRow);
-        segment({38, cy + 54, 430, 64}, 3, "Pocket Audio", pocket);
+        segment({38, cy + 54, 430, 64}, 3, "Continue Playing", pocket);
         segment({480, cy + 54, 430, 64}, 4, "Pause", !pocket);
 
         if (mediaSupported()) {
@@ -2463,12 +2458,17 @@ void DeckUi::scrubPosition(Action which, float x)
         player.seek((x - deckWave.x) / deckWave.w);
     } else {
         const float fraction = std::clamp((x - volumeTrack.x - 22) / (volumeTrack.w - 44), 0.f, 1.f);
-        player.volume = static_cast<int>(std::round(fraction * 100));
-        if (player.volume > 0)
-            lastNonZeroVolume = player.volume;
-        player.mute = player.volume == 0;
-        volumeTime = .9f;
+        setVolume(static_cast<int>(std::round(fraction * 100)));
     }
+}
+
+void DeckUi::setVolume(int value)
+{
+    player.volume = std::clamp(value, 0, 100);
+    if (player.volume > 0)
+        lastNonZeroVolume = player.volume;
+    player.mute = player.volume == 0;
+    volumeTime = .9f;
 }
 
 void DeckUi::cycleStage()
@@ -4162,10 +4162,11 @@ void DeckUi::useBluetoothFixture()
 
 WebSettings DeckUi::webSettings() const
 {
-    return {static_cast<int>(theme), brightness, clock24h, player.sfx, pocket};
+    return {static_cast<int>(theme), brightness, clock24h, player.sfx, pocket, currentAccent(),
+            player.sfxVolume, player.sfxSpeaker};
 }
 
-void DeckUi::setWebSetting(WebSetting setting, int value)
+void DeckUi::setWebSetting(WebSetting setting, int value, int settingTheme)
 {
     switch (setting) {
     case WebSetting::Theme: theme = static_cast<Theme>(value); break;
@@ -4173,7 +4174,112 @@ void DeckUi::setWebSetting(WebSetting setting, int value)
     case WebSetting::Clock: clock24h = value != 0; break;
     case WebSetting::Sfx: player.sfx = value != 0; break;
     case WebSetting::Lid: pocket = value != 0; break;
+    case WebSetting::Accent: themeAccents[settingTheme] = value; break;
+    case WebSetting::SfxVolume: player.sfxVolume = value; break;
+    case WebSetting::SfxOutput: player.sfxSpeaker = value != 0; break;
     case WebSetting::Count: break;
+    }
+}
+
+WebConfigState::Bluetooth DeckUi::webBluetooth() const
+{
+    using State = BluetoothPairing::State;
+    WebConfigState::Bluetooth state;
+    state.supported = bluetooth.supported();
+    state.demo = bluetooth.simulated();
+    state.busy = bluetooth.busy();
+    state.scanning = bluetooth.state() == State::Searching;
+    switch (bluetooth.state()) {
+    case State::Searching: state.message = "Searching for audio devices…"; break;
+    case State::Pairing: state.message = "Connecting…"; break;
+    case State::Unpairing: state.message = "Forgetting device…"; break;
+    case State::Failed: state.message = "Could not connect to the Bluetooth device."; state.error = true; break;
+    case State::UnpairFailed: state.message = "Could not forget the Bluetooth device."; state.error = true; break;
+    case State::Unavailable: state.message = "No powered Bluetooth adapter available."; state.error = true; break;
+    case State::Ready:
+        if (bluetooth.devices().empty())
+            state.message = "No audio devices found.";
+        break;
+    default: break;
+    }
+    for (const auto& device : bluetooth.devices())
+        state.devices.push_back({device.id, device.name, device.paired, bluetooth.isConnected(device)});
+    std::stable_partition(state.devices.begin(), state.devices.end(), [](const auto& device) { return device.paired; });
+    if (!state.supported)
+        state.message = "Bluetooth setup is unavailable.";
+    return state;
+}
+
+void DeckUi::applyWebBluetooth(WebConfigCommand::Type action, std::string_view target)
+{
+    using Type = WebConfigCommand::Type;
+    if (!bluetooth.supported() || bluetooth.busy())
+        return;
+    if (action == Type::BluetoothRefreshPaired) {
+        if (bluetooth.state() != BluetoothPairing::State::Searching)
+            bluetooth.refreshPaired();
+        return;
+    }
+    if (action == Type::BluetoothScan) {
+        if (bluetooth.state() != BluetoothPairing::State::Searching)
+            bluetooth.scan();
+        return;
+    }
+    const auto& devices = bluetooth.devices();
+    const auto device = std::ranges::find(devices, target, &BluetoothPairing::Device::id);
+    if (device == devices.end())
+        return;
+    const auto index = static_cast<int>(device - devices.begin());
+    if (action == Type::BluetoothForget)
+        bluetooth.unpair(index);
+    else if (!bluetooth.isConnected(*device))
+        bluetooth.pair(index);
+}
+
+WebConfigState::Playback DeckUi::webPlayback() const
+{
+    WebConfigState::Playback state;
+    const auto* track = player.track();
+    if (track) {
+        const auto duration = std::max(track->duration, 0);
+        state.trackId = track->id;
+        state.durationMs = static_cast<int64_t>(duration) * 1000;
+        state.positionMs = std::llround(std::clamp(player.seconds, 0.0, static_cast<double>(duration)) * 1000);
+    }
+    state.volume = player.volume;
+    state.available = !poweredOff;
+    state.playing = player.playing;
+    state.muted = player.mute || player.volume == 0;
+    state.canPlay = track || !player.queue.empty() || !player.played.empty() || !player.history.empty();
+    state.canPrevious = track || !player.history.empty();
+    state.canNext = track || !player.queue.empty() || (player.repeat == 1 && !player.history.empty());
+    return state;
+}
+
+void DeckUi::applyWebPlayback(const WebPlaybackCommand& command)
+{
+    if (poweredOff)
+        return;
+    using WebAction = WebPlaybackCommand::Action;
+    switch (command.action) {
+    case WebAction::Previous: activate(Action::Previous, 0); break;
+    case WebAction::Play:
+    case WebAction::Pause:
+        if (player.playing != (command.action == WebAction::Play))
+            activate(Action::Play, 0);
+        break;
+    case WebAction::Next: activate(Action::Next, 0); break;
+    case WebAction::Seek:
+        if (const auto* track = player.track(); track && track->id == command.trackId && track->duration > 0)
+            player.seek(static_cast<float>(command.value / (1000.0 * track->duration)));
+        break;
+    case WebAction::Volume:
+        setVolume(static_cast<int>(command.value));
+        break;
+    case WebAction::Mute:
+        if ((player.mute || player.volume == 0) != (command.value != 0))
+            activate(Action::Mute, 0);
+        break;
     }
 }
 

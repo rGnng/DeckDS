@@ -320,6 +320,89 @@ struct FolderPicker {
     std::optional<FolderChoice> choice;
 };
 
+class WebWifiSetup {
+public:
+    const WebConfigState::Wifi& state() const { return status; }
+
+    void refreshLink(bool connected)
+    {
+        fallbackConnected = connected;
+        if (!status.supported) {
+            status.connected = connected;
+        } else if (!status.busy && !linkTask.valid()) {
+            linkTask = std::async(std::launch::async, activeWifi);
+        }
+    }
+
+    void start(WebConfigCommand command)
+    {
+        if (!status.supported || status.busy)
+            return;
+        const bool scan = command.type == WebConfigCommand::Type::WifiScan;
+        if (!scan) {
+            const auto selected = std::ranges::find(status.networks, command.target, &WifiNetwork::id);
+            if (selected == status.networks.end() || selected->connected) {
+                status.message = "This network is no longer available to join. Scan again.";
+                status.error = true;
+                return;
+            }
+            connecting = selected->id;
+            status.message = "Connecting to " + selected->name + "…";
+            task = std::async(std::launch::async,
+                [network = *selected, password = std::move(command.wifiPassword)] { return connectWifi(network, password); });
+        } else {
+            status.message = "Scanning for Wi-Fi networks…";
+            task = std::async(std::launch::async, scanWifi);
+        }
+        status.busy = true;
+        status.error = false;
+    }
+
+    void update()
+    {
+        if (linkTask.valid() && linkTask.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            auto link = linkTask.get();
+            if (!status.busy) {
+                status.connected = link.has_value() || fallbackConnected;
+                status.accessPoint = std::move(link);
+                for (auto& network : status.networks) {
+                    if (status.accessPoint && !status.accessPoint->id.empty())
+                        network.connected = network.id == status.accessPoint->id;
+                    else if (!status.connected)
+                        network.connected = false;
+                }
+            }
+        }
+        if (!task.valid() || task.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return;
+        auto result = task.get();
+        if (connecting.empty()) {
+            status.networks = std::move(result.networks);
+        } else if (!result.error) {
+            status.connected = true;
+            for (auto& network : status.networks) {
+                network.connected = network.id == connecting;
+                if (network.connected)
+                    status.accessPoint = WifiConnection{network.name, network.id, network.strength};
+            }
+        }
+        connecting.clear();
+        status.message = std::move(result.message);
+        status.error = result.error;
+        status.busy = false;
+        if (!result.error)
+            refreshLink(status.connected);
+    }
+
+private:
+    WebConfigState::Wifi status{.message = wifiSetupSupported() ? "" : "Wi-Fi setup is unavailable.",
+                                .supported = wifiSetupSupported()};
+    std::string connecting;
+    bool fallbackConnected = false;
+    std::future<std::optional<WifiConnection>> linkTask;
+    std::future<WifiResult> task;
+};
+
 void SDLCALL musicFolderChosen(void* data, const char* const* files, int)
 {
     const std::unique_ptr<std::shared_ptr<FolderPicker>> picker(static_cast<std::shared_ptr<FolderPicker>*>(data));
@@ -373,9 +456,19 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
     DebugLog debugLog(WebConfig::supported());
     DeckUi app;
     WebConfig web;
+    WebWifiSetup webWifi;
     if (longMetadata)
         app.useLongMetadataFixture();
     const auto preferences = previewPreferences();
+    const auto otaFile = preferences.empty() ? std::filesystem::path{} : preferences / "ota-url";
+    WebConfigState::Ota ota;
+    if (std::ifstream input(otaFile, std::ios::binary); input) {
+        std::string url(otaUrlLimit + 1, '\0');
+        input.read(url.data(), url.size());
+        url.resize(input.gcount());
+        if (!input.bad() && validOtaUrl(url))
+            ota.url = std::move(url);
+    }
     const auto folderFile = preferences.empty() ? std::filesystem::path{} : preferences / "music-folder";
     const auto database = preferences.empty() ? std::filesystem::path{} : preferences / "library.sqlite";
     const bool explicitMusicPath = !musicPath.empty();
@@ -500,12 +593,11 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
         }
     auto* textWindow = windows.back()->window;
     if (WebConfig::supported()) {
-        if (web.start()) {
-            app.webAddress = web.address();
+        if (web.start(preferences)) {
+            app.refreshBluetoothDevices();
             SDL_Log("Web Config is listening on 0.0.0.0:8080");
         } else {
-            app.webError = web.error();
-            SDL_Log("Web Config: %s", app.webError.c_str());
+            SDL_Log("Web Config: %s", web.error().c_str());
         }
     }
     const auto picker = std::make_shared<FolderPicker>();
@@ -676,13 +768,13 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
         if (now >= nextWifiPoll) {
             app.wifiConnected = isWifiConnected();
             if (web.running())
-                app.webAddress = web.address();
+                webWifi.refreshLink(app.wifiConnected);
             nextWifiPoll = now + 3'000'000'000ULL;
         }
         bool scanFromWeb = false;
         if (web.running()) {
             using Type = WebConfigCommand::Type;
-            for (const auto& command : web.takeCommands()) {
+            for (auto& command : web.takeCommands()) {
                 switch (command.type) {
                 case Type::QuickScan:
                 case Type::FullScan:
@@ -697,10 +789,37 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                         app.answerMissingFiles(command.type == Type::RemoveMissing);
                     break;
                 case Type::Setting:
-                    app.setWebSetting(command.setting, command.value);
+                    app.setWebSetting(command.setting, command.value, command.theme);
+                    break;
+                case Type::Playback:
+                    app.applyWebPlayback(command.playback);
+                    break;
+                case Type::OtaUrl:
+                    ++ota.revision;
+                    ota.error.clear();
+                    if (command.otaUrl != ota.url) {
+                        if (!otaFile.empty() && savePreviewSettings(otaFile, command.otaUrl))
+                            ota.url = command.otaUrl;
+                        else
+                            ota.error = "DeckDS could not save the OTA URL.";
+                    }
+                    nextWebPublish = 0;
+                    break;
+                case Type::WifiScan:
+                case Type::WifiConnect:
+                    webWifi.start(std::move(command));
+                    nextWebPublish = 0;
+                    break;
+                case Type::BluetoothRefreshPaired:
+                case Type::BluetoothScan:
+                case Type::BluetoothConnect:
+                case Type::BluetoothForget:
+                    app.applyWebBluetooth(command.type, command.target);
+                    nextWebPublish = 0;
                     break;
                 }
             }
+            webWifi.update();
         }
         if (std::exchange(app.musicFolderRequested, false) && !choosingMusicFolder && !app.musicRemovalPending()) {
             choosingMusicFolder = true;
@@ -817,6 +936,12 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
             state.missing = app.missingMusicFiles();
             state.removing = app.removingMusicFiles();
             state.settings = app.webSettings();
+            const auto accents = accentPresets(app.theme);
+            std::ranges::transform(accents, state.accents.begin(), &AccentPreset::name);
+            state.playback = app.webPlayback();
+            state.ota = ota;
+            state.wifi = webWifi.state();
+            state.bluetooth = app.webBluetooth();
             if (const auto* track = app.player.track()) {
                 state.track = track->title;
                 state.artist = track->artist;

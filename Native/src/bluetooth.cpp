@@ -160,6 +160,8 @@ std::vector<BluetoothPairing::Device> audioDevices(GVariant* objects, const std:
             continue;
         gboolean paired = false;
         g_variant_lookup(device.get(), "Paired", "b", &paired);
+        gboolean connected = false;
+        g_variant_lookup(device.get(), "Connected", "b", &connected);
         gint16 rssi = 0;
         if (!paired && (pairedOnly || !g_variant_lookup(device.get(), "RSSI", "n", &rssi)))
             continue;
@@ -171,7 +173,7 @@ std::vector<BluetoothPairing::Device> audioDevices(GVariant* objects, const std:
         g_variant_lookup(device.get(), "Class", "u", &deviceClass);
         g_variant_lookup(device.get(), "Alias", "&s", &name);
         if (*name && (std::string_view(icon).starts_with("audio-") || (deviceClass & 0x1f00) == 0x0400))
-            devices.push_back({path, name, static_cast<bool>(paired)});
+            devices.push_back({path, name, static_cast<bool>(paired), static_cast<bool>(connected)});
     }
     std::ranges::sort(devices, {}, &BluetoothPairing::Device::name);
     return devices;
@@ -185,6 +187,7 @@ struct BluetoothPairing::Operation {
     struct Result {
         State state;
         bool paired = false;
+        std::optional<std::vector<Device>> pairedDevices{};
     };
     std::future<Result> result;
     std::mutex discoveryMutex;
@@ -233,6 +236,15 @@ struct BluetoothPairing::Operation {
 
             const auto initial = managedObjects(bus.get(), cancel.get());
             const auto adapter = poweredAdapter(initial.get());
+            if (kind == Kind::ListPaired) {
+                Result listed{State::Idle};
+                if (initial) {
+                    listed.pairedDevices = adapter.empty() ? std::vector<Device>{} :
+                        audioDevices(initial.get(), adapter, true);
+                }
+                reply.set_value(std::move(listed));
+                return;
+            }
             const auto publish = [&](std::vector<Device> devices) {
                 const std::lock_guard lock(discoveryMutex);
                 for (auto& device : devices)
@@ -240,10 +252,6 @@ struct BluetoothPairing::Operation {
             };
             if (!adapter.empty())
                 publish(audioDevices(initial.get(), adapter, true));
-            if (kind == Kind::ListPaired) {
-                reply.set_value({State::Idle});
-                return;
-            }
             if (adapter.empty() || !call(bus.get(), adapter.c_str(), adapterInterface, "StartDiscovery", cancel.get())) {
                 reply.set_value({State::Unavailable});
                 return;
@@ -274,6 +282,15 @@ BluetoothPairing::BluetoothPairing()
 #endif
 }
 BluetoothPairing::~BluetoothPairing() = default;
+
+bool BluetoothPairing::supported() const
+{
+#if defined(DECKDS_BLUEZ)
+    return true;
+#else
+    return demo;
+#endif
+}
 
 void BluetoothPairing::useDemoDevices()
 {
@@ -382,13 +399,26 @@ void BluetoothPairing::update(double dt)
         if (!operation)
             return;
         const bool ready = operation->result.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-        for (auto& device : operation->takeDiscoveries())
+        for (auto& device : operation->takeDiscoveries()) {
+            if (device.connected && (connected.id.empty() || connected.id == device.id))
+                connected = device;
+            else if (connected.id == device.id)
+                connected = {};
             mergeDevice(found, std::move(device));
+        }
         if (!ready)
             return;
-        const auto result = operation->result.get();
+        auto result = operation->result.get();
         operation.reset();
         status = result.state;
+        if (result.pairedDevices) {
+            found = std::move(*result.pairedDevices);
+            const auto active = std::ranges::find_if(found, [&](const Device& device) {
+                return device.connected && device.id == connected.id;
+            });
+            const auto selected = active != found.end() ? active : std::ranges::find(found, true, &Device::connected);
+            connected = selected != found.end() ? *selected : Device{};
+        }
         if (result.paired) {
             pending.paired = true;
             mergeDevice(found, pending);

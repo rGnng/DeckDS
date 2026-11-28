@@ -32,7 +32,6 @@ public:
     std::optional<MusicScanMode> musicRescanRequested;
     std::optional<bool> musicMissingDecision;
     bool musicFolderSelected = false, musicFolderRequested = false;
-    std::string webAddress, webError;
     Player player;
     bool lid = false;
     bool showKeys = false;
@@ -68,7 +67,12 @@ public:
     void dismissMissingFiles();
     void removeMediaTracks(std::span<const std::string> ids);
     WebSettings webSettings() const;
-    void setWebSetting(WebSetting setting, int value);
+    void setWebSetting(WebSetting setting, int value, int settingTheme);
+    WebConfigState::Bluetooth webBluetooth() const;
+    void refreshBluetoothDevices() { bluetooth.refreshPaired(); }
+    void applyWebBluetooth(WebConfigCommand::Type action, std::string_view target);
+    WebConfigState::Playback webPlayback() const;
+    void applyWebPlayback(const WebPlaybackCommand& command);
     void useLongMetadataFixture();
     void useBluetoothFixture();
     void configureSnapshot(int preset);
@@ -263,6 +267,7 @@ private:
     void scrubSettingsRail(float y);
     void scrubOutputRail(float y);
     void scrubPosition(Action action, float x);
+    void setVolume(int value);
     void openInput(Input field);
     void closeInput(bool confirm);
     void setTab(int index);

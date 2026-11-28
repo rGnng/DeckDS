@@ -20,7 +20,7 @@ On Linux, install the SDL3, SDL3_ttf and SDL3_image development packages with SD
 
 The Audio Output sheet models the RG DS Plus headphone DAC, speakers, and Bluetooth output. Bluetooth pairing uses demo devices on macOS. On Linux, install the GIO development package (`gio-2.0` in pkg-config) at build time and run with BlueZ and an enabled adapter to discover and pair audio devices. Playback in the preview uses the host’s default audio output.
 
-Run with `--bluetooth-demo` to open Audio Output with ten simulated paired devices. On macOS, use `open -n Native/build/DeckDS.app --args --bluetooth-demo`. Changes made in this demo are discarded on exit.
+Run with `--bluetooth-demo` to open Audio Output with ten simulated paired devices. On macOS, use `open -n Native/build/DeckDS.app --args --bluetooth-demo`. Changes to the simulated devices are discarded on exit.
 
 The main window scales two fixed 1024 × 768 panels. The right panel provides clickable RG DS Plus controls, theme switching, and five display modes. **Fit** fills the available space. **Integer** snaps to a whole-number pixel scale with a minimum of 1×. **1× Pixels** and **2× Pixels** use 1024 × 768 and 2048 × 1536 backing pixels per panel. **Studio Display 5K / 1:1** calibrates for the 27-inch, 218 PPI Studio Display and targets 87.4 × 65.5 mm per panel. Use the display's native Retina mode for physical pixel matching. Right-drag or Option-scroll to pan an oversized preview.
 
@@ -57,10 +57,14 @@ DeckDS reads embedded album art and common folder covers on demand. The Deck wav
 
 ### Web Config
 
-Install `libmicrohttpd` with Homebrew on macOS or `libmicrohttpd-dev` on Debian or Ubuntu, then reconfigure and rebuild.
+Install `libmicrohttpd` and `openssl@3` with Homebrew on macOS or `libmicrohttpd-dev` and `libssl-dev` on Debian or Ubuntu, then reconfigure and rebuild. On macOS, include `-DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"` in the CMake configure command.
 
-Web Config starts with DeckDS and listens on all IPv4 interfaces at port 8080. Open `http://127.0.0.1:8080` on the same computer or use the IP address shown at the top of **Deck Settings** from another device. Access requires no password. DeckDS serves Bootstrap and all other browser assets locally.
+Web Config starts with DeckDS and listens on all IPv4 interfaces at port 8080. Open `http://127.0.0.1:8080` on the same computer. From another device, use the IPv4 address of the computer running DeckDS and port 8080. The Web Config password defaults to empty. A password enables the sign-in dialog. The browser remembers sign-in using a persistent cookie. Changing or clearing the password invalidates earlier cookies. DeckDS serves Bootstrap and all other browser assets locally.
 
-The browser shows the active library, scan progress, and Now Playing. Scans and missing-file decisions share the same state with the SDL3 app. Theme, brightness, clock format, SFX, and lid behavior apply live and use the preview’s existing settings file.
+The browser shows the active library, scan progress, and Now Playing. The Now Playing controls operate the DeckDS player, including previous and next track, play and pause, seeking, volume, and mute. Scans and missing-file decisions share the same state with the SDL3 app. Theme, accent color, brightness, clock format, SFX, SFX volume, SFX output, and lid behavior apply live and use the preview’s existing settings file.
+
+**Connectivity** scans for visible open and WPA Personal Wi-Fi networks and joins them through NetworkManager on Linux or CoreWLAN on macOS. Linux requires GIO at build time and a NetworkManager-managed adapter at runtime. **Bluetooth Audio** discovers, pairs, connects, and forgets devices through the same BlueZ controller as the Deck on Linux. The macOS preview uses demo Bluetooth devices.
+
+Under **Deck Settings → Updates**, use **Edit URL** to save or clear the device’s OTA URL. **Update** is disabled pending hardware support.
 
 **Debug** opens the live diagnostics page at `/debug`. `GET /api/debug` returns the versioned JSON snapshot and the latest 96 in-memory DeckDS log entries. Use it to inspect the SDL display and audio drivers, active audio rates, controller and touch devices, power, memory, and scan status.

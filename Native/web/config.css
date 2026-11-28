@@ -20,12 +20,134 @@
   --bs-btn-disabled-color: #9c9c9c;
   --bs-btn-disabled-border-color: #383838;
 }
+.btn-primary {
+  --bs-btn-color: #f5f5f5;
+  --bs-btn-bg: #2d2d2d;
+  --bs-btn-border-color: #555;
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: #3a3a3a;
+  --bs-btn-hover-border-color: #777;
+  --bs-btn-focus-shadow-rgb: 173, 173, 173;
+  --bs-btn-active-color: #fff;
+  --bs-btn-active-bg: #424242;
+  --bs-btn-active-border-color: #888;
+  --bs-btn-disabled-color: #aaa;
+  --bs-btn-disabled-bg: #202020;
+  --bs-btn-disabled-border-color: #424242;
+}
 main.container { max-width: 960px; }
-.deck-logo { height: auto; max-width: 48%; margin-left: -4px; }
-.setting { display: grid; grid-template-columns: 1fr minmax(132px, 48%); align-items: center; gap: .75rem; }
+.deck-logo { height: auto; min-width: 0; max-width: 48%; margin-left: -4px; }
+.config-page { padding: .5rem .625rem 1rem; }
+.config-header { padding-bottom: .5rem; margin-bottom: .5rem; }
+.config-header .deck-logo { width: 116px; }
+.config-grid, .config-player { display: grid; align-content: start; gap: .5rem; min-width: 0; }
+.config-grid { grid-template-columns: minmax(0, 1fr); align-items: start; }
+.config-page .card-body { padding: .75rem; }
+.config-page .card { background: #050505; }
+.track-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+.seek-row, .transport-row, .volume-row { display: grid; align-items: center; gap: .5rem; }
+.seek-row { grid-template-columns: auto minmax(0, 1fr) auto; margin-block: .25rem; }
+.transport-row { grid-template-columns: repeat(3, 1fr); }
+.volume-row { grid-template-columns: 44px minmax(0, 1fr) 5ch; margin-top: .375rem; }
+.seek-row .form-range, .volume-row .form-range { margin: 0; }
+.config-player .form-range::-webkit-slider-runnable-track { background: #5c5c5c; }
+.config-player .form-range::-moz-range-track { background: #5c5c5c; }
+.icon-button { display: grid; place-items: center; min-height: 44px; padding: .25rem; }
+.action-icon { width: 20px; height: 20px; fill: currentColor; }
+.action-icon[hidden] { display: none; }
+.scan-actions .btn { flex: 1 0 auto; }
+.library-title { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: .5rem; }
+.library-title-status { display: grid; min-width: 0; min-height: 1.5em; align-items: center; text-align: right; }
+.library-title-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4ch;
+  align-items: center;
+  gap: .375rem;
+  width: min(100%, 10rem);
+  justify-self: end;
+}
+.library-title-progress progress { width: 100%; height: .4rem; accent-color: #aaa; }
+.library-feedback { height: 1.5em; }
+.config-page .btn-sm, .connectivity-dialog .btn-sm { min-height: 34px; }
+.config-page .config-header .btn { display: inline-flex; align-items: center; }
+[hidden] { display: none !important; }
+.settings-fields { display: grid; gap: .25rem; }
+.setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10.75rem, 48%);
+  align-items: center;
+  gap: .5rem;
+  font-size: .875rem;
+}
+.setting .form-select { min-height: 34px; }
+.device-list { max-height: 16rem; overflow: auto; }
+.device-row { display: flex; gap: .5rem; align-items: center; padding-block: .375rem; }
+.device-row + .device-row { border-top: 1px solid var(--bs-border-color); }
+.device-name { min-width: 0; overflow-wrap: anywhere; }
+.device-row .device-name > div { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.device-actions { flex: 0 0 auto; margin-left: auto; display: flex; gap: .25rem; }
+.connectivity-dialog .device-list { height: min(15rem, 32vh); }
+.wifi-feedback { height: 2.5rem; overflow: auto; }
+.wifi-link { display: flex; align-items: center; gap: .4rem; min-width: 0; }
+.wifi-link svg, #wifi-scan { flex: 0 0 auto; }
+#wifi-strength { font-variant-numeric: tabular-nums; }
+.forget-device { width: 4.5rem; }
+.scan-tooltip-anchor { position: relative; }
+.scan-tooltip-anchor .btn[aria-disabled="true"] {
+  color: var(--bs-btn-disabled-color);
+  background: var(--bs-btn-disabled-bg);
+  border-color: var(--bs-btn-disabled-border-color);
+  opacity: var(--bs-btn-disabled-opacity);
+}
+.scan-tooltip {
+  position: absolute;
+  z-index: 2;
+  inset-inline-end: calc(100% + .375rem);
+  top: 50%;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: min(15rem, calc(100vw - 7.5rem));
+  padding: .3rem .5rem;
+  color: var(--bs-body-color);
+  background: var(--bs-secondary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius-sm);
+  overflow-wrap: anywhere;
+  visibility: hidden;
+}
+.scan-tooltip-anchor:is(:hover, :focus-within, [data-active]):not([data-dismissed]) .scan-tooltip:not(:empty) {
+  visibility: visible;
+}
+
+@media (min-width: 768px) {
+  .config-page { padding: 1rem 1rem 1.25rem; }
+  .config-header { margin-bottom: .75rem; }
+  .config-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: .75rem; }
+}
+
+@media (pointer: coarse) {
+  .config-page .btn-sm, .connectivity-dialog .btn-sm, .setting .form-select { min-height: 36px; }
+  .seek-row .form-range, .volume-row .form-range { height: 32px; }
+}
+
+dialog {
+  width: min(32rem, calc(100% - 2rem));
+  padding: 0;
+  color: var(--bs-body-color);
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+}
+dialog::backdrop { background: rgb(0 0 0 / 72%); }
 .feedback:empty { display: none; }
-progress { height: .875rem; accent-color: var(--bs-primary); }
-.scan-actions .btn { min-height: 42px; white-space: nowrap; }
-.debug-fields { display: grid; grid-template-columns: 1fr 1.35fr; gap: .4rem .75rem; }
-.debug-fields dd { margin: 0; overflow-wrap: anywhere; }
-.debug-log { max-height: 28rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.debug-title { min-width: 0; }
+.debug-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: .4rem .75rem; }
+.debug-fields > * { margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.debug-log { height: clamp(8rem, 28vh, 16rem); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }

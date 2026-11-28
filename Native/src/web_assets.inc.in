@@ -7,4 +7,6 @@ constexpr std::string_view pageStyle = R"deckds(@DECKDS_WEB_CSS@)deckds";
 constexpr std::string_view pageScript = R"deckds(@DECKDS_WEB_JS@)deckds";
 constexpr std::string_view debugHtml = R"deckds(@DECKDS_DEBUG_HTML@)deckds";
 constexpr std::string_view debugScript = R"deckds(@DECKDS_DEBUG_JS@)deckds";
+constexpr std::string_view loginHtml = R"deckds(@DECKDS_LOGIN_HTML@)deckds";
+constexpr std::string_view loginScript = R"deckds(@DECKDS_LOGIN_JS@)deckds";
 constexpr std::string_view logoSvg = R"deckds(@DECKDS_WEB_LOGO@)deckds";

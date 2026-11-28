@@ -10,7 +10,7 @@ public:
     enum class State { Idle, Searching, Ready, Pairing, Connected, Unpairing, Removed, Failed, UnpairFailed, Unavailable };
     struct Device {
         std::string id, name;
-        bool paired = false;
+        bool paired = false, connected = false;
     };
 
     BluetoothPairing();
@@ -27,6 +27,8 @@ public:
     std::vector<std::string_view> demoPairedDevices() const;
 
     State state() const { return status; }
+    bool simulated() const { return demo; }
+    bool supported() const;
     bool busy() const { return status == State::Pairing || status == State::Unpairing; }
     const std::vector<Device>& devices() const { return found; }
     State stateFor(const Device& device) const { return device.id == pending.id ? status : State::Idle; }
