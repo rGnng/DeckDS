@@ -24,8 +24,10 @@
         <section class="card" aria-labelledby="now-heading">
           <div class="card-body">
             <h1 class="h6 mb-2" id="now-heading">Now Playing</h1>
-            <strong class="track-title" id="track"></strong>
-            <p class="small text-body-secondary text-truncate mb-0" id="artist"></p>
+            <div class="track-metadata">
+              <strong class="track-title text-truncate" id="track">No track selected</strong>
+              <span class="track-artist small text-body-secondary text-truncate" id="artist"></span>
+            </div>
             <div class="seek-row small font-monospace text-body-secondary">
               <output id="elapsed" for="seek">0:00</output>
               <label class="visually-hidden" for="seek">Playback position</label>

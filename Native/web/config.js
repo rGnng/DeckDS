@@ -130,7 +130,7 @@ function show(state) {
   tracks.hidden = Boolean(state.scan);
   showText("folder", state.folder || "Choose a music folder in DeckDS.");
   showText("track", state.track || "No track selected");
-  showText("artist", state.artist);
+  showText("artist", state.track ? state.artist || "" : "");
   showPlayback(state.playback);
   showText("ota-url", state.ota?.url || "Not set");
   otaEdit.disabled = !state.ota;
