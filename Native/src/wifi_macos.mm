@@ -117,13 +117,24 @@ WifiResult connectWifi(const WifiNetwork& network, const std::string& password)
             if (![secret length])
                 return wifiError("Enter a Wi-Fi password.");
         }
-        const auto encoded = network.id.substr(0, network.id.find(':'));
-        NSData* ssid = [[[NSData alloc] initWithBase64EncodedString:
-                         [NSString stringWithUTF8String:encoded.c_str()] options:0] autorelease];
+        NSData* ssid = nil;
+        if (network.manual) {
+            if (network.ssidBytes.empty() || network.ssidBytes.size() > 32 ||
+                ![NSString stringWithUTF8String:network.ssidBytes.c_str()])
+                return wifiError("Enter a valid network name of up to 32 bytes.");
+            ssid = [NSData dataWithBytes:network.ssidBytes.data() length:network.ssidBytes.size()];
+        } else {
+            const auto encoded = network.id.substr(0, network.id.find(':'));
+            ssid = [[[NSData alloc] initWithBase64EncodedString:
+                     [NSString stringWithUTF8String:encoded.c_str()] options:0] autorelease];
+        }
         if (!ssid)
             return wifiError("This network is no longer visible. Scan again.");
-        for (CWNetwork* point in [wifi scanForNetworksWithSSID:ssid error:nullptr]) {
-            if (![[point ssidData] isEqualToData:ssid] || securityOf(point) != network.security)
+        for (CWNetwork* point in [wifi scanForNetworksWithSSID:ssid includeHidden:network.manual error:nullptr]) {
+            const auto security = securityOf(point);
+            const bool compatible = security == network.security ||
+                (network.manual && network.security == WifiNetwork::Security::Personal && security == WifiNetwork::Security::Sae);
+            if (![[point ssidData] isEqualToData:ssid] || !compatible)
                 continue;
             if ([wifi associateToNetwork:point password:secret error:nullptr])
                 return {.message = "Connected to " + network.name + "."};

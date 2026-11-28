@@ -5,17 +5,21 @@
 #include <cstdio>
 
 #if defined(DECKDS_FFMPEG)
+#include "music_identity.hpp"
+
 #include <array>
 #include <cctype>
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <iterator>
 #include <mutex>
 #include <sqlite3.h>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -72,11 +76,17 @@ std::string lowercase(std::string value)
     return value;
 }
 
-std::string tag(const AVFormatContext& file, const AVStream& audio, const char* key)
+const AVDictionaryEntry* metadataTag(const AVFormatContext& file, const AVStream& audio, const char* key)
 {
     const auto* value = av_dict_get(audio.metadata, key, nullptr, 0);
     if (!value || !*value->value)
         value = av_dict_get(file.metadata, key, nullptr, 0);
+    return value;
+}
+
+std::string tag(const AVFormatContext& file, const AVStream& audio, const char* key)
+{
+    const auto* value = metadataTag(file, audio, key);
     return value ? value->value : "";
 }
 
@@ -136,6 +146,27 @@ bool readMetadata(const std::filesystem::path& path, MediaFile& media, const std
     media.artist = tag(*file, stream, "artist");
     media.album = tag(*file, stream, "album");
     media.albumArtist = tag(*file, stream, "album_artist");
+    const bool flac = lowercase(path.extension().string()) == ".flac";
+    const bool hasRawAlbum = flac && metadataTag(*file, stream, "album");
+    media.identityAlbum = hasRawAlbum ? media.album : musicIdentifier(media.album);
+    media.identityArtist = musicIdentifier(media.artist);
+    auto albumArtist = musicIdentifier(tag(*file, stream, "albumartist"));
+    if (albumArtist.empty())
+        albumArtist = musicIdentifier(media.albumArtist);
+    media.identityAlbumArtist = albumArtist;
+    for (const auto* key : {"album artist", "ensemble", "band"}) {
+        if (!media.identityAlbumArtist.empty())
+            break;
+        media.identityAlbumArtist = musicIdentifier(tag(*file, stream, key));
+    }
+    if (!hasRawAlbum && media.identityAlbum.empty())
+        media.identityAlbum = "Unknown Album";
+    if (media.identityArtist.empty()) {
+        const auto& fallback = flac ? albumArtist : media.identityAlbumArtist;
+        media.identityArtist = fallback.empty() ? "Unknown Artist" : fallback;
+    }
+    if (media.identityAlbumArtist.empty())
+        media.identityAlbumArtist = media.identityArtist;
     if (media.title.empty())
         media.title = path.stem().string();
     if (media.album.empty()) {
@@ -239,6 +270,13 @@ public:
     Statement query(const char* sql) { return Statement(db.get(), sql); }
     int changes() const { return sqlite3_changes(db.get()); }
 
+    bool hasTable(std::string_view name)
+    {
+        auto result = query("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?;");
+        result.bind(1, name);
+        return result.next();
+    }
+
     void begin(const std::stop_token& stop)
     {
         const auto wait = [](void* token, int attempts) {
@@ -251,39 +289,77 @@ public:
         checkSql(db.get(), sqlite3_busy_handler(db.get(), wait, const_cast<std::stop_token*>(&stop)));
         exec("PRAGMA journal_mode=WAL;");
         exec("BEGIN IMMEDIATE;");
+    }
+
+    void create()
+    {
         exec(R"sql(
-            CREATE TABLE IF NOT EXISTS music_folder(
-                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                root TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS music_sources(
+                id TEXT PRIMARY KEY, root TEXT NOT NULL UNIQUE, original_root TEXT NOT NULL,
+                identifier TEXT NOT NULL, id_namespace TEXT NOT NULL, sync_url TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1
             );
-            CREATE TABLE IF NOT EXISTS music_files(
-                relative TEXT NOT NULL UNIQUE,
+            CREATE TABLE IF NOT EXISTS music_entries(
+                source TEXT NOT NULL, relative TEXT NOT NULL,
                 title TEXT NOT NULL, artist TEXT NOT NULL, album TEXT NOT NULL, album_artist TEXT NOT NULL,
                 format TEXT NOT NULL, rate TEXT NOT NULL, bitrate TEXT NOT NULL,
                 modified TEXT NOT NULL, added TEXT NOT NULL,
                 disc INTEGER NOT NULL, number INTEGER NOT NULL, year INTEGER NOT NULL,
                 duration INTEGER NOT NULL, channels INTEGER NOT NULL, bit_depth INTEGER NOT NULL,
-                bytes INTEGER NOT NULL, mtime INTEGER NOT NULL, lossless INTEGER NOT NULL, missing INTEGER NOT NULL
+                bytes INTEGER NOT NULL, mtime INTEGER NOT NULL, lossless INTEGER NOT NULL, missing INTEGER NOT NULL,
+                identity_artist TEXT NOT NULL DEFAULT '', identity_album TEXT NOT NULL DEFAULT '',
+                identity_album_artist TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(source, relative)
+            );
+            CREATE TABLE IF NOT EXISTS music_id_aliases(
+                old_id TEXT PRIMARY KEY, source TEXT NOT NULL, relative TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS music_namespaces(
+                namespace TEXT PRIMARY KEY, source TEXT NOT NULL
             );
         )sql");
+        if (!query("SELECT 1 FROM pragma_table_info('music_sources') WHERE name='sync_url';").next())
+            exec("ALTER TABLE music_sources ADD COLUMN sync_url TEXT;");
+        if (!query("SELECT 1 FROM pragma_table_info('music_sources') WHERE name='enabled';").next())
+            exec("ALTER TABLE music_sources ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;");
     }
 
-    std::optional<MediaLibrary> load(const std::filesystem::path& directory, std::vector<size_t>* staleDates = nullptr)
+    std::vector<MusicFolder> folders()
     {
-        auto root = query("SELECT root FROM music_folder WHERE singleton = 1;");
-        if (!root.next() || root.text(0) != directory.string())
-            return std::nullopt;
+        auto rows = query("SELECT id,root,original_root,identifier,id_namespace,sync_url,enabled FROM music_sources ORDER BY rowid;");
+        std::vector<MusicFolder> result;
+        while (rows.next())
+            result.push_back({rows.text(0), rows.text(1), rows.text(2), rows.text(3), rows.text(4), rows.text(5), rows.number(6) != 0});
+        return result;
+    }
+
+    void backup(const std::filesystem::path& destination)
+    {
+        MusicIndex copy(destination, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+        auto* job = sqlite3_backup_init(copy.db.get(), "main", db.get(), "main");
+        if (!job)
+            throw std::runtime_error(sqlite3_errmsg(copy.db.get()));
+        const int result = sqlite3_backup_step(job, -1);
+        const int finished = sqlite3_backup_finish(job);
+        if (result != SQLITE_DONE)
+            throw std::runtime_error(sqlite3_errstr(result));
+        checkSql(copy.db.get(), finished);
+    }
+
+    MediaLibrary load(const MusicFolder& folder, std::vector<size_t>* staleDates = nullptr)
+    {
         auto files = query(R"sql(
             SELECT relative, title, artist, album, album_artist, format, rate, bitrate, modified, added,
-                   disc, number, year, duration, channels, bit_depth, bytes, mtime, lossless, missing
-            FROM music_files ORDER BY rowid;
+                   disc, number, year, duration, channels, bit_depth, bytes, mtime, lossless, missing,
+                   identity_artist, identity_album, identity_album_artist
+            FROM music_entries WHERE source = ? ORDER BY rowid;
         )sql");
+        files.bind(1, folder.id);
         MediaLibrary library;
         while (files.next()) {
             auto& file = library.files.emplace_back();
             const auto relative = files.text(0);
-            file.path = (directory / relative).string();
-            file.id = mediaKey(relative);
+            file.path = (std::filesystem::path(folder.root) / relative).string();
             file.title = files.text(1);
             file.artist = files.text(2);
             file.album = files.text(3);
@@ -306,19 +382,37 @@ public:
                 staleDates->push_back(library.files.size() - 1);
             file.lossless = files.number(18) != 0;
             file.missing = files.number(19) != 0;
-            library.missing += file.missing;
+            file.identityArtist = files.text(20);
+            file.identityAlbum = files.text(21);
+            file.identityAlbumArtist = files.text(22);
+            assignIds(file, folder, relative);
+            library.missing += folder.enabled && file.missing;
         }
         return library;
+    }
+
+    static void assignIds(MediaFile& file, const MusicFolder& folder, std::string_view relative)
+    {
+        file.libraryId = folder.id;
+        file.disabled = !folder.enabled;
+        if (folder.idNamespace.empty()) {
+            file.id = mediaKey(relative);
+            return;
+        }
+        file.id = musicSongId(folder.idNamespace, relative);
+        file.artistId = musicArtistId(file.identityArtist.empty() ? file.artist : file.identityArtist);
+        file.albumArtistId = musicArtistId(file.identityAlbumArtist.empty() ? file.albumArtist : file.identityAlbumArtist);
+        file.albumId = musicAlbumId(file.albumArtistId, file.identityArtist.empty() ? file.album : file.identityAlbum);
     }
 
 private:
     std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db{nullptr, sqlite3_close};
 };
 
-void saveMediaFile(Statement& write, std::string_view relative, const MediaFile& file)
+void saveMediaFile(Statement& write, std::string_view library, std::string_view relative, const MediaFile& file)
 {
     int index = 1;
-    for (const std::string_view text : {relative, std::string_view(file.title), std::string_view(file.artist),
+    for (const std::string_view text : {library, relative, std::string_view(file.title), std::string_view(file.artist),
                                        std::string_view(file.album), std::string_view(file.albumArtist),
                                        std::string_view(file.format), std::string_view(file.rate),
                                        std::string_view(file.bitrate), std::string_view(file.modified),
@@ -329,74 +423,385 @@ void saveMediaFile(Statement& write, std::string_view relative, const MediaFile&
     write.bind(index++, static_cast<sqlite3_int64>(file.bytes));
     write.bind(index++, file.modificationStamp);
     write.bind(index++, file.lossless);
-    write.bind(index, file.missing);
+    write.bind(index++, file.missing);
+    write.bind(index++, file.identityArtist);
+    write.bind(index++, file.identityAlbum);
+    write.bind(index, file.identityAlbumArtist);
     write.write();
+}
+}
+
+namespace {
+std::filesystem::path canonicalMusicFolder(const std::filesystem::path& path)
+{
+    if (!path.is_absolute())
+        throw std::runtime_error("Enter an absolute path on DeckDS.");
+    std::error_code error;
+    auto root = std::filesystem::canonical(path, error);
+    if (error || !std::filesystem::is_directory(root, error))
+        throw std::runtime_error("The music folder is unavailable.");
+    std::filesystem::directory_iterator probe(root, error);
+    if (error)
+        throw std::runtime_error("The music folder could not be read.");
+    return root;
+}
+
+bool under(const std::filesystem::path& path, const std::filesystem::path& root)
+{
+    const auto relative = path.lexically_relative(root);
+    return !relative.empty() && *relative.begin() != "..";
+}
+
+void validateRoot(const std::vector<MusicFolder>& folders, const std::filesystem::path& root, std::string_view except)
+{
+    for (const auto& folder : folders) {
+        if (folder.id != except && (under(root, folder.root) || under(folder.root, root)))
+            throw std::runtime_error("Music folders cannot overlap.");
+    }
+}
+
+void validateIdentifier(MusicIndex& index, const std::vector<MusicFolder>& folders, std::string_view identifier,
+                        std::string_view except)
+{
+    const auto normal = musicNamespace(identifier);
+    if (normal.empty() || identifier.size() > 128)
+        throw std::runtime_error("Enter a library identifier of up to 128 bytes.");
+    for (const auto& folder : folders) {
+        if (folder.id != except && musicNamespace(folder.identifier) == normal)
+            throw std::runtime_error("That library identifier is already in use.");
+    }
+    auto reserved = index.query("SELECT 1 FROM music_namespaces WHERE namespace=? AND source<>?;");
+    reserved.bind(1, normal);
+    reserved.bind(2, except);
+    if (reserved.next())
+        throw std::runtime_error("That ID namespace belongs to another library.");
+}
+
+void reserveNamespace(MusicIndex& index, std::string_view nameSpace, std::string_view library)
+{
+    auto write = index.query("INSERT OR IGNORE INTO music_namespaces(namespace,source) VALUES(?,?);");
+    write.bind(1, nameSpace);
+    write.bind(2, library);
+    write.write();
+}
+
+void insertFolder(MusicIndex& index, const MusicFolder& folder)
+{
+    auto insert = index.query("INSERT INTO music_sources(id,root,original_root,identifier,id_namespace,sync_url) VALUES(?,?,?,?,?,NULLIF(?,''));");
+    insert.bind(1, folder.id);
+    insert.bind(2, folder.root);
+    insert.bind(3, folder.originalRoot);
+    insert.bind(4, folder.identifier);
+    insert.bind(5, folder.idNamespace);
+    insert.bind(6, folder.syncUrl);
+    insert.write();
+    if (!folder.idNamespace.empty())
+        reserveNamespace(index, folder.idNamespace, folder.id);
+}
+
+void migrateMusicSyncUrl(MusicIndex& index, std::string_view previousUrl)
+{
+    if (previousUrl.empty())
+        return;
+    // NULL means the source has never had a setting. An explicit empty URL stays cleared.
+    auto update = index.query(R"sql(
+        UPDATE music_sources SET sync_url=?
+        WHERE id=(SELECT id FROM music_sources ORDER BY rowid LIMIT 1) AND sync_url IS NULL;
+    )sql");
+    update.bind(1, previousUrl);
+    update.write();
+}
+
+const MusicFolder& requireFolder(const std::vector<MusicFolder>& folders, std::string_view id)
+{
+    const auto folder = std::ranges::find(folders, id, &MusicFolder::id);
+    if (folder == folders.end())
+        throw std::runtime_error("That library is unavailable.");
+    return *folder;
+}
+
+void writeLibrarySettings(MusicIndex& index, std::string_view library, std::string_view identifier,
+                          std::optional<std::string_view> syncUrl)
+{
+    auto update = index.query("UPDATE music_sources SET identifier=?, sync_url=CASE WHEN ? THEN ? ELSE sync_url END WHERE id=?;");
+    update.bind(1, identifier);
+    update.bind(2, syncUrl.has_value());
+    update.bind(3, syncUrl.value_or(std::string_view{}));
+    update.bind(4, library);
+    update.write();
+}
+
+std::string indexedSongId(const MusicFolder& folder, std::string_view relative)
+{
+    return folder.idNamespace.empty() ? mediaKey(relative) : musicSongId(folder.idNamespace, relative);
+}
+
+constexpr auto writeSongAlias = R"sql(
+    INSERT INTO music_id_aliases(old_id,source,relative) VALUES(?,?,?)
+    ON CONFLICT(old_id) DO UPDATE SET relative=excluded.relative
+    WHERE music_id_aliases.source=excluded.source AND music_id_aliases.relative=excluded.relative;
+)sql";
+
+void saveSongAlias(MusicIndex& index, Statement& alias, std::string_view oldId,
+                   std::string_view library, std::string_view relative)
+{
+    alias.bind(1, oldId);
+    alias.bind(2, library);
+    alias.bind(3, relative);
+    alias.write();
+    if (!index.changes())
+        throw std::runtime_error("A previous song ID belongs to a different file.");
+}
+
+void saveLibraryNamespace(MusicIndex& index, Statement& update, std::string_view library, std::string_view nameSpace)
+{
+    reserveNamespace(index, nameSpace, library);
+    update.bind(1, nameSpace);
+    update.bind(2, library);
+    update.write();
+}
+
+bool initializeMissingNamespaces(MusicIndex& index)
+{
+    const auto folders = index.folders();
+    if (std::ranges::none_of(folders, [](const auto& folder) { return folder.idNamespace.empty(); }))
+        return false;
+
+    auto alias = index.query(writeSongAlias);
+    auto update = index.query("UPDATE music_sources SET id_namespace=? WHERE id=?;");
+    std::unordered_set<std::string> songIds;
+    for (const auto& folder : folders) {
+        const bool migrate = folder.idNamespace.empty();
+        const auto nameSpace = migrate ? musicNamespace(folder.identifier) : folder.idNamespace;
+        if (migrate)
+            validateIdentifier(index, folders, folder.identifier, folder.id);
+        auto files = index.query("SELECT relative FROM music_entries WHERE source=?;");
+        files.bind(1, folder.id);
+        while (files.next()) {
+            const auto relative = files.text(0);
+            if (!songIds.insert(musicSongId(nameSpace, relative)).second)
+                throw std::runtime_error("Two files have the same song ID. Check for matching normalized paths.");
+            if (migrate)
+                saveSongAlias(index, alias, mediaKey(relative), folder.id, relative);
+        }
+        if (migrate)
+            saveLibraryNamespace(index, update, folder.id, nameSpace);
+    }
+    return true;
+}
+
+void appendLibrary(MediaLibrary& catalog, MediaLibrary library)
+{
+    catalog.files.insert(catalog.files.end(), std::make_move_iterator(library.files.begin()),
+                         std::make_move_iterator(library.files.end()));
+    catalog.missingPaths.insert(catalog.missingPaths.end(), std::make_move_iterator(library.missingPaths.begin()),
+                                std::make_move_iterator(library.missingPaths.end()));
+    catalog.skipped += library.skipped;
+    catalog.reused += library.reused;
+    catalog.probed += library.probed;
+    catalog.missing += library.missing;
+}
+
+void validateSongIds(const MediaLibrary& library)
+{
+    std::unordered_set<std::string_view> ids;
+    ids.reserve(library.files.size());
+    for (const auto& file : library.files) {
+        if (!ids.insert(file.id).second)
+            throw std::runtime_error("Two files have the same song ID. Check for matching normalized paths.");
+    }
 }
 }
 
 bool mediaSupported() { return true; }
 
-std::optional<MediaLibrary> loadMusicIndex(const std::filesystem::path& directory, const std::filesystem::path& database)
+bool initializeMusicIndex(const std::filesystem::path& database, const std::filesystem::path& previousRoot,
+                          std::string_view previousSyncUrl)
 {
-    std::error_code error;
-    if (database.empty() || !std::filesystem::is_regular_file(database, error))
-        return std::nullopt;
-    MusicIndex index(database, SQLITE_OPEN_READONLY);
-    auto schema = index.query("SELECT 1 FROM sqlite_schema WHERE name = 'music_folder';");
-    return schema.next() ? index.load(directory) : std::nullopt;
+    if (database.empty())
+        throw std::runtime_error("DeckDS could not open its library settings directory.");
+    MusicIndex index(database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+    const std::stop_token stop;
+    index.begin(stop);
+    const bool migrate = !index.hasTable("music_sources");
+    index.create();
+    if (migrate) {
+        std::string oldRoot;
+        if (index.hasTable("music_folder")) {
+            auto query = index.query("SELECT root FROM music_folder WHERE singleton=1;");
+            if (query.next())
+                oldRoot = query.text(0);
+        }
+        const auto root = oldRoot.empty() ? previousRoot.string() : oldRoot;
+        if (!root.empty()) {
+            const auto id = musicLibraryId(root);
+            insertFolder(index, {id, root, root, "library1", {}});
+            if (!oldRoot.empty() && index.hasTable("music_files")) {
+                auto copy = index.query(R"sql(
+                    INSERT INTO music_entries(source,relative,title,artist,album,album_artist,format,rate,bitrate,
+                                              modified,added,disc,number,year,duration,channels,bit_depth,bytes,mtime,lossless,missing)
+                    SELECT ?,relative,title,artist,album,album_artist,format,rate,bitrate,
+                             modified,added,disc,number,year,duration,channels,bit_depth,bytes,mtime,lossless,missing
+                    FROM music_files;
+                )sql");
+                copy.bind(1, id);
+                copy.write();
+            }
+        }
+    }
+    const bool initializedNamespaces = initializeMissingNamespaces(index);
+    migrateMusicSyncUrl(index, previousSyncUrl);
+    index.exec("COMMIT;");
+    return initializedNamespaces;
 }
 
-MediaLibrary scanMusic(const std::filesystem::path& directory, MediaScanProgress& progress, std::stop_token stop,
-                       const std::filesystem::path& database)
+std::vector<MusicFolder> musicFolders(const std::filesystem::path& database)
 {
-    constexpr std::array<std::string_view, 13> extensions{
-        ".m4a", ".mp3", ".alac", ".aac", ".mp4", ".flac", ".wav", ".aif",
-        ".aiff", ".aifc", ".ogg", ".opus", ".wma",
-    };
-    std::vector<std::filesystem::directory_entry> candidates;
+    MusicIndex index(database, SQLITE_OPEN_READONLY);
+    return index.folders();
+}
+
+MediaLibrary loadMusicIndex(const std::filesystem::path& database)
+{
+    MusicIndex index(database, SQLITE_OPEN_READONLY);
+    index.exec("BEGIN;");
+    MediaLibrary catalog;
+    for (const auto& folder : index.folders())
+        appendLibrary(catalog, index.load(folder));
+    validateSongIds(catalog);
+    return catalog;
+}
+
+MusicIdAliases musicIdAliases(const std::filesystem::path& database)
+{
+    MusicIndex index(database, SQLITE_OPEN_READONLY);
+    auto rows = index.query(R"sql(
+        SELECT aliases.old_id, aliases.relative, sources.id_namespace
+        FROM music_id_aliases AS aliases
+        JOIN music_entries AS entries ON entries.source=aliases.source AND entries.relative=aliases.relative
+        JOIN music_sources AS sources ON sources.id=aliases.source;
+    )sql");
+    MusicIdAliases aliases;
+    while (rows.next())
+        aliases.emplace(rows.text(0), musicSongId(rows.text(2), rows.text(1)));
+    return aliases;
+}
+
+void addMusicFolder(const std::filesystem::path& database, const std::filesystem::path& path, std::string_view identifier,
+                    std::string_view previousSyncUrl, std::string_view syncUrl)
+{
+    const auto root = canonicalMusicFolder(path).string();
+    MusicIndex index(database, SQLITE_OPEN_READWRITE);
+    const std::stop_token stop;
+    index.begin(stop);
+    const auto folders = index.folders();
+    const auto existing = std::ranges::find(folders, root, &MusicFolder::root);
+    auto name = musicIdentifier(identifier);
+    if (existing != folders.end()) {
+        if ((name.empty() || musicNamespace(name) == musicNamespace(existing->identifier)) &&
+            (syncUrl.empty() || syncUrl == existing->syncUrl))
+            return;
+        throw std::runtime_error("That music folder already belongs to a library.");
+    }
+    validateRoot(folders, root, {});
+    if (name.empty()) {
+        for (size_t number = 1;; ++number) {
+            name = "library" + std::to_string(number);
+            auto used = index.query("SELECT 1 FROM music_namespaces WHERE namespace=?;");
+            used.bind(1, name);
+            if (!used.next() && std::ranges::none_of(folders, [&](const auto& folder) {
+                    return musicNamespace(folder.identifier) == name;
+                }))
+                break;
+        }
+    }
+    const auto id = musicLibraryId(root);
+    if (std::ranges::find(folders, id, &MusicFolder::id) != folders.end())
+        throw std::runtime_error("That folder created an existing library. Use Relocate to update its location.");
+    validateIdentifier(index, folders, name, {});
+    insertFolder(index, {id, root, root, name, musicNamespace(name), std::string(syncUrl)});
+    migrateMusicSyncUrl(index, previousSyncUrl);
+    index.exec("COMMIT;");
+}
+
+void renameMusicFolder(const std::filesystem::path& database, std::string_view library, std::string_view identifier,
+                       std::optional<std::string_view> syncUrl)
+{
+    MusicIndex index(database, SQLITE_OPEN_READWRITE);
+    const std::stop_token stop;
+    index.begin(stop);
+    const auto folders = index.folders();
+    requireFolder(folders, library);
+    const auto name = musicIdentifier(identifier);
+    validateIdentifier(index, folders, name, library);
+    writeLibrarySettings(index, library, name, syncUrl);
+    index.exec("COMMIT;");
+}
+
+void setMusicSyncUrl(const std::filesystem::path& database, std::string_view library, std::string_view url)
+{
+    MusicIndex index(database, SQLITE_OPEN_READWRITE);
+    auto update = index.query("UPDATE music_sources SET sync_url=? WHERE id=?;");
+    update.bind(1, url);
+    update.bind(2, library);
+    update.write();
+    if (!index.changes())
+        throw std::runtime_error("That library is unavailable.");
+}
+
+void setMusicFolderEnabled(const std::filesystem::path& database, std::string_view library, bool enabled)
+{
+    MusicIndex index(database, SQLITE_OPEN_READWRITE);
+    auto update = index.query("UPDATE music_sources SET enabled=? WHERE id=?;");
+    update.bind(1, enabled);
+    update.bind(2, library);
+    update.write();
+    if (!index.changes())
+        throw std::runtime_error("That library is unavailable.");
+}
+
+namespace {
+constexpr std::array<std::string_view, 13> musicExtensions{
+    ".m4a", ".mp3", ".alac", ".aac", ".mp4", ".flac", ".wav", ".aif",
+    ".aiff", ".aifc", ".ogg", ".opus", ".wma",
+};
+
+std::vector<std::filesystem::directory_entry> collectMusic(const std::filesystem::path& root, std::stop_token stop)
+{
+    std::vector<std::filesystem::directory_entry> files;
     std::error_code walkError;
-    std::filesystem::recursive_directory_iterator it(directory, std::filesystem::directory_options::skip_permission_denied, walkError);
-    const std::filesystem::recursive_directory_iterator end;
-    for (; it != end && !stop.stop_requested(); it.increment(walkError)) {
-        if (walkError)
-            throw std::runtime_error(walkError.message());
+    std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, walkError);
+    for (std::filesystem::recursive_directory_iterator end; it != end && !walkError && !stop.stop_requested(); it.increment(walkError)) {
         const auto& entry = *it;
         std::error_code error;
         if (entry.symlink_status(error).type() != std::filesystem::file_type::regular)
             continue;
         const auto filename = entry.path().filename().string();
-        if (filename.starts_with('.') || std::ranges::find(extensions, lowercase(entry.path().extension().string())) == extensions.end())
+        if (filename.starts_with('.') || std::ranges::find(musicExtensions, lowercase(entry.path().extension().string())) == musicExtensions.end())
             continue;
-        candidates.push_back(entry);
+        files.push_back(entry);
     }
-    if (stop.stop_requested())
-        return {};
     if (walkError)
         throw std::runtime_error(walkError.message());
-    progress.total.store(candidates.size(), std::memory_order_relaxed);
+    return files;
+}
 
-    MusicIndex index(database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
-    index.begin(stop);
+MediaLibrary scanFolder(MusicIndex& index, const MusicFolder& folder, const std::vector<std::filesystem::directory_entry>& candidates,
+                        MediaScanProgress& progress, size_t offset, std::stop_token stop)
+{
+    const std::filesystem::path root(folder.root);
     std::vector<size_t> staleDates;
-    auto cached = index.load(directory, &staleDates);
-    MediaLibrary result = cached ? std::move(*cached) : MediaLibrary{};
-    if (!cached) {
-        index.exec("DELETE FROM music_files;");
-        auto root = index.query("INSERT OR REPLACE INTO music_folder(singleton, root) VALUES (1, ?);");
-        root.bind(1, directory.string());
-        root.write();
-    }
-    if (!staleDates.empty()) {
-        auto update = index.query("UPDATE music_files SET added = ?, modified = ? WHERE relative = ?;");
-        for (const auto i : staleDates) {
-            if (stop.stop_requested())
-                return {};
-            const auto& file = result.files[i];
-            update.bind(1, file.added);
-            update.bind(2, file.modified);
-            update.bind(3, std::filesystem::path(file.path).lexically_relative(directory).generic_string());
-            update.write();
-        }
+    auto result = index.load(folder, &staleDates);
+    auto update = index.query("UPDATE music_entries SET added=?, modified=? WHERE source=? AND relative=?;");
+    for (const auto i : staleDates) {
+        if (stop.stop_requested())
+            return {};
+        const auto& file = result.files[i];
+        update.bind(1, file.added);
+        update.bind(2, file.modified);
+        update.bind(3, folder.id);
+        update.bind(4, std::filesystem::path(file.path).lexically_relative(root).generic_string());
+        update.write();
     }
 
     std::unordered_map<std::string, size_t> known;
@@ -405,27 +810,30 @@ MediaLibrary scanMusic(const std::filesystem::path& directory, MediaScanProgress
         known.emplace(result.files[i].path, i);
     std::vector<bool> seen(result.files.size(), false);
     auto upsert = index.query(R"sql(
-        INSERT INTO music_files(relative, title, artist, album, album_artist, format, rate, bitrate, modified,
-                                added, disc, number, year, duration, channels, bit_depth, bytes, mtime, lossless, missing)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(relative) DO UPDATE SET
+        INSERT INTO music_entries(source, relative, title, artist, album, album_artist, format, rate, bitrate,
+                                modified, added, disc, number, year, duration, channels, bit_depth, bytes, mtime, lossless, missing,
+                                identity_artist, identity_album, identity_album_artist)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source, relative) DO UPDATE SET
             title=excluded.title, artist=excluded.artist, album=excluded.album, album_artist=excluded.album_artist,
             format=excluded.format, rate=excluded.rate, bitrate=excluded.bitrate, modified=excluded.modified, added=excluded.added,
             disc=excluded.disc, number=excluded.number, year=excluded.year, duration=excluded.duration,
             channels=excluded.channels, bit_depth=excluded.bit_depth, bytes=excluded.bytes, mtime=excluded.mtime,
-            lossless=excluded.lossless, missing=excluded.missing;
+            lossless=excluded.lossless, missing=excluded.missing, identity_artist=excluded.identity_artist,
+            identity_album=excluded.identity_album, identity_album_artist=excluded.identity_album_artist;
     )sql");
-    auto mark = index.query("UPDATE music_files SET missing = ? WHERE relative = ?;");
+    auto mark = index.query("UPDATE music_entries SET missing=? WHERE source=? AND relative=?;");
     const auto markMissing = [&](MediaFile& file, bool missing) {
         if (file.missing == missing)
             return;
         file.missing = missing;
         mark.bind(1, file.missing);
-        mark.bind(2, std::filesystem::path(file.path).lexically_relative(directory).generic_string());
+        mark.bind(2, folder.id);
+        mark.bind(3, std::filesystem::path(file.path).lexically_relative(root).generic_string());
         mark.write();
     };
     for (size_t processed = 0; processed < candidates.size() && !stop.stop_requested(); ++processed) {
-        progress.checked.store(processed, std::memory_order_release);
+        progress.checked.store(offset + processed, std::memory_order_release);
         const auto& entry = candidates[processed];
         std::error_code error;
         const auto stamp = entry.last_write_time(error);
@@ -445,7 +853,8 @@ MediaLibrary scanMusic(const std::filesystem::path& directory, MediaScanProgress
             continue;
         }
         const auto ticks = static_cast<int64_t>(stamp.time_since_epoch().count());
-        if (previous && previous->bytes == size && previous->modificationStamp == ticks) {
+        if (previous && previous->bytes == size && previous->modificationStamp == ticks &&
+            (folder.idNamespace.empty() || !previous->identityArtist.empty())) {
             markMissing(*previous, false);
             ++result.reused;
             continue;
@@ -456,83 +865,309 @@ MediaLibrary scanMusic(const std::filesystem::path& directory, MediaScanProgress
             ++result.skipped;
             continue;
         }
-        const std::string relative = entry.path().lexically_relative(directory).generic_string();
-        media.id = mediaKey(relative);
+        const std::string relative = entry.path().lexically_relative(root).generic_string();
+        MusicIndex::assignIds(media, folder, relative);
         media.bytes = size;
         media.modificationStamp = ticks;
         media.added = modificationTime(stamp);
         media.modified = media.added.substr(0, 10);
-        saveMediaFile(upsert, relative, media);
+        saveMediaFile(upsert, folder.id, relative, media);
         if (previous)
             *previous = std::move(media);
         else
             result.files.push_back(std::move(media));
     }
-    if (stop.stop_requested())
-        return {};
-    progress.checked.store(candidates.size(), std::memory_order_release);
+    progress.checked.store(offset + candidates.size(), std::memory_order_release);
     for (size_t i = 0; i < seen.size() && !stop.stop_requested(); ++i) {
         if (seen[i])
             continue;
+        auto& file = result.files[i];
         std::error_code error;
-        const auto status = std::filesystem::status(result.files[i].path, error);
+        const auto status = std::filesystem::status(file.path, error);
         if (status.type() == std::filesystem::file_type::not_found) {
-            markMissing(result.files[i], true);
-            result.missingPaths.push_back(std::filesystem::path(result.files[i].path).lexically_relative(directory).generic_string());
+            markMissing(file, true);
+            result.missingPaths.push_back({folder.id, std::filesystem::path(file.path).lexically_relative(root).generic_string()});
+        }
+    }
+    result.missing = std::ranges::count(result.files, true, &MediaFile::missing);
+    return result;
+}
+}
+
+MediaLibrary scanMusic(MediaScanProgress& progress, std::stop_token stop, const std::filesystem::path& database)
+{
+    MusicIndex index(database, SQLITE_OPEN_READWRITE);
+    index.begin(stop);
+    const auto folders = index.folders();
+    std::vector<std::optional<std::vector<std::filesystem::directory_entry>>> candidates;
+    size_t total = 0;
+    for (const auto& folder : folders) {
+        if (stop.stop_requested())
+            return {};
+        if (!folder.enabled) {
+            candidates.emplace_back(std::nullopt);
+            continue;
+        }
+        std::error_code error;
+        std::filesystem::directory_iterator probe(folder.root, error);
+        if (error) {
+            candidates.emplace_back(std::nullopt);
+        } else {
+            candidates.emplace_back(collectMusic(folder.root, stop));
+            total += candidates.back()->size();
+        }
+    }
+    progress.total.store(total, std::memory_order_relaxed);
+    MediaLibrary catalog;
+    size_t offset = 0;
+    for (size_t i = 0; i < folders.size() && !stop.stop_requested(); ++i) {
+        if (candidates[i]) {
+            appendLibrary(catalog, scanFolder(index, folders[i], *candidates[i], progress, offset, stop));
+            offset += candidates[i]->size();
+        } else {
+            catalog.unavailable += folders[i].enabled;
+            appendLibrary(catalog, index.load(folders[i]));
         }
     }
     if (stop.stop_requested())
         return {};
-    result.missing = std::ranges::count(result.files, true, &MediaFile::missing);
+    for (size_t i = 0; i < folders.size(); ++i) {
+        std::error_code error;
+        if (candidates[i] && !std::filesystem::is_directory(folders[i].root, error))
+            throw std::runtime_error("A music folder became unavailable during the scan.");
+    }
+    validateSongIds(catalog);
     index.exec("COMMIT;");
-    return result;
+    return catalog;
 }
 
-std::vector<std::string> removeMissingMusic(const std::filesystem::path& directory, std::span<const std::string> paths,
-                                            std::stop_token stop, const std::filesystem::path& database)
+std::vector<std::string> removeMissingMusic(std::span<const MusicPath> paths, std::stop_token stop,
+                                            const std::filesystem::path& database)
 {
-    std::error_code error;
-    if (!std::filesystem::is_directory(directory, error))
-        throw std::runtime_error("Music folder is unavailable");
-    const auto stillMissing = [&](const std::string& path) {
-        return std::filesystem::status(directory / path, error).type() == std::filesystem::file_type::not_found;
-    };
-
-    std::vector<std::string> removed;
-    if (database.empty()) {
-        for (const auto& path : paths) {
-            if (stop.stop_requested())
-                return {};
-            if (stillMissing(path))
-                removed.push_back(mediaKey(path));
-        }
-        return removed;
-    }
-
     MusicIndex index(database, SQLITE_OPEN_READWRITE);
     index.begin(stop);
-    auto root = index.query("SELECT 1 FROM music_folder WHERE singleton = 1 AND root = ?;");
-    root.bind(1, directory.string());
-    if (!root.next())
-        throw std::runtime_error("The music folder has changed");
-
-    auto erase = index.query("DELETE FROM music_files WHERE relative = ? AND missing = 1;");
+    const auto folders = index.folders();
+    auto erase = index.query("DELETE FROM music_entries WHERE source=? AND relative=? AND missing=1;");
+    auto eraseAlias = index.query("DELETE FROM music_id_aliases WHERE source=? AND relative=?;");
+    std::vector<std::string> removed;
+    std::unordered_set<std::string> checkedRoots;
     for (const auto& path : paths) {
         if (stop.stop_requested())
             return {};
-        if (!stillMissing(path))
+        const auto& folder = requireFolder(folders, path.library);
+        if (!folder.enabled)
             continue;
-        erase.bind(1, path);
+        std::error_code error;
+        if (!std::filesystem::is_directory(folder.root, error))
+            continue;
+        if (std::filesystem::status(std::filesystem::path(folder.root) / path.relative, error).type() !=
+            std::filesystem::file_type::not_found)
+            continue;
+        erase.bind(1, path.library);
+        erase.bind(2, path.relative);
         erase.write();
-        if (index.changes())
-            removed.push_back(mediaKey(path));
+        if (index.changes()) {
+            removed.push_back(indexedSongId(folder, path.relative));
+            checkedRoots.insert(folder.root);
+            eraseAlias.bind(1, path.library);
+            eraseAlias.bind(2, path.relative);
+            eraseAlias.write();
+        }
     }
     if (stop.stop_requested())
         return {};
-    if (!std::filesystem::is_directory(directory, error))
-        throw std::runtime_error("Music folder is unavailable");
+    for (const auto& root : checkedRoots) {
+        std::error_code error;
+        if (!std::filesystem::is_directory(root, error))
+            throw std::runtime_error("A music folder became unavailable while removing missing tracks.");
+    }
     index.exec("COMMIT;");
     return removed;
+}
+
+namespace {
+void verifyRunning(std::stop_token stop)
+{
+    if (stop.stop_requested())
+        throw std::runtime_error("Library operation canceled.");
+}
+
+MusicRelocation planRelocation(MusicIndex& index, std::string_view library,
+                               std::string_view destination, std::stop_token stop,
+                               const std::optional<MusicLibrarySettings>& settings)
+{
+    MusicRelocation plan;
+    plan.folders = index.folders();
+    const auto& folder = requireFolder(plan.folders, library);
+    if (settings) {
+        auto identifier = musicIdentifier(settings->identifier);
+        validateIdentifier(index, plan.folders, identifier, folder.id);
+        plan.settings = MusicLibrarySettings{std::move(identifier), settings->syncUrl};
+    }
+    const auto root = canonicalMusicFolder(destination);
+    if (root == folder.root)
+        throw std::runtime_error("Choose a different music folder.");
+    validateRoot(plan.folders, root, library);
+    plan.library = library;
+    plan.destination = root.string();
+    auto files = index.query("SELECT relative FROM music_entries WHERE source=? ORDER BY relative;");
+    files.bind(1, library);
+    while (files.next()) {
+        verifyRunning(stop);
+        const auto relative = files.text(0);
+        const auto candidate = root / relative;
+        std::error_code error;
+        const auto status = std::filesystem::symlink_status(candidate, error);
+        if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory)
+            throw std::runtime_error("A path in the new folder could not be checked.");
+        if (status.type() == std::filesystem::file_type::regular) {
+            const auto resolved = std::filesystem::canonical(candidate, error);
+            if (error)
+                throw std::runtime_error("A path in the new folder could not be checked.");
+            if (resolved == candidate && under(resolved, root)) {
+                ++plan.matched;
+                continue;
+            }
+        }
+        plan.missing.push_back(relative);
+    }
+    return plan;
+}
+}
+
+MusicRelocation previewMusicRelocation(const std::filesystem::path& database, std::string_view library,
+                                       std::string_view destination, std::stop_token stop,
+                                       const std::optional<MusicLibrarySettings>& settings)
+{
+    MusicIndex index(database, SQLITE_OPEN_READONLY);
+    index.exec("BEGIN;");
+    return planRelocation(index, library, destination, stop, settings);
+}
+
+void relocateMusicLibrary(const std::filesystem::path& database, const MusicRelocation& plan,
+                          const std::filesystem::path& backup, std::stop_token stop)
+{
+    verifyRunning(stop);
+    MusicIndex index(database, SQLITE_OPEN_READWRITE);
+    index.backup(backup);
+    index.begin(stop);
+    if (planRelocation(index, plan.library, plan.destination, stop, plan.settings) != plan)
+        throw std::runtime_error("The library changed after preview. Open a new preview.");
+
+    auto root = index.query("UPDATE music_sources SET root=? WHERE id=?;");
+    root.bind(1, plan.destination);
+    root.bind(2, plan.library);
+    root.write();
+    if (plan.settings)
+        writeLibrarySettings(index, plan.library, plan.settings->identifier, plan.settings->syncUrl);
+    auto reset = index.query("UPDATE music_entries SET missing=0 WHERE source=?;");
+    reset.bind(1, plan.library);
+    reset.write();
+    auto mark = index.query("UPDATE music_entries SET missing=1 WHERE source=? AND relative=?;");
+    for (const auto& path : plan.missing) {
+        verifyRunning(stop);
+        mark.bind(1, plan.library);
+        mark.bind(2, path);
+        mark.write();
+    }
+    verifyRunning(stop);
+    index.exec("COMMIT;");
+}
+
+void rekeyMusicIndex(const std::filesystem::path& database, const std::filesystem::path& backup,
+                     MediaScanProgress& progress, std::stop_token stop)
+{
+    verifyRunning(stop);
+    MusicIndex index(database, SQLITE_OPEN_READWRITE);
+    index.backup(backup);
+    index.begin(stop);
+    const auto folders = index.folders();
+    if (folders.empty())
+        throw std::runtime_error("Add a music folder first.");
+    for (const auto& folder : folders)
+        validateIdentifier(index, folders, folder.identifier, folder.id);
+    {
+        auto count = index.query("SELECT count(*) FROM music_entries;");
+        if (count.next())
+            progress.total.store(static_cast<size_t>(count.number(0)), std::memory_order_relaxed);
+    }
+
+    struct IdentityTags {
+        std::string path, artist, album, albumArtist;
+    };
+    auto alias = index.query(writeSongAlias);
+    auto tags = index.query(R"sql(
+        UPDATE music_entries SET identity_artist=?, identity_album=?, identity_album_artist=? WHERE source=? AND relative=?;
+    )sql");
+    auto update = index.query("UPDATE music_sources SET id_namespace=? WHERE id=?;");
+    std::unordered_set<std::string> newIds;
+    for (const auto& folder : folders) {
+        const auto nameSpace = musicNamespace(folder.identifier);
+        std::vector<IdentityTags> uncached;
+        {
+            auto files = index.query("SELECT relative, identity_artist FROM music_entries WHERE source=?;");
+            files.bind(1, folder.id);
+            while (files.next()) {
+                verifyRunning(stop);
+                const auto relative = files.text(0);
+                const auto before = indexedSongId(folder, relative);
+                const auto after = musicSongId(nameSpace, relative);
+                if (!newIds.insert(after).second)
+                    throw std::runtime_error("Two files have the same song ID. Check for matching normalized paths.");
+                if (before != after)
+                    saveSongAlias(index, alias, before, folder.id, relative);
+                // Indexes created before namespaced IDs can lack the original tag names.
+                if (folder.enabled && files.text(1).empty()) {
+                    std::error_code error;
+                    const auto path = std::filesystem::path(folder.root) / relative;
+                    MediaFile file;
+                    if (std::filesystem::symlink_status(path, error).type() == std::filesystem::file_type::regular &&
+                        readMetadata(path, file, stop))
+                        uncached.push_back({relative, std::move(file.identityArtist), std::move(file.identityAlbum),
+                                            std::move(file.identityAlbumArtist)});
+                }
+                progress.checked.fetch_add(1, std::memory_order_release);
+            }
+        }
+        for (const auto& item : uncached) {
+            verifyRunning(stop);
+            tags.bind(1, item.artist);
+            tags.bind(2, item.album);
+            tags.bind(3, item.albumArtist);
+            tags.bind(4, folder.id);
+            tags.bind(5, item.path);
+            tags.write();
+        }
+        saveLibraryNamespace(index, update, folder.id, nameSpace);
+    }
+    verifyRunning(stop);
+    index.exec("COMMIT;");
+}
+
+void deleteMusicFolder(const std::filesystem::path& database, std::string_view library,
+                       const std::filesystem::path& backup, std::stop_token stop)
+{
+    verifyRunning(stop);
+    MusicIndex index(database, SQLITE_OPEN_READWRITE);
+    if (requireFolder(index.folders(), library).enabled)
+        throw std::runtime_error("Disable the library before deleting it.");
+    index.backup(backup);
+    index.begin(stop);
+    if (requireFolder(index.folders(), library).enabled)
+        throw std::runtime_error("Disable the library before deleting it.");
+    for (const auto* sql : {
+             "DELETE FROM music_id_aliases WHERE source=?;",
+             "DELETE FROM music_entries WHERE source=?;",
+             "DELETE FROM music_namespaces WHERE source=?;",
+             "DELETE FROM music_sources WHERE id=?;",
+         }) {
+        verifyRunning(stop);
+        auto erase = index.query(sql);
+        erase.bind(1, library);
+        erase.write();
+    }
+    verifyRunning(stop);
+    index.exec("COMMIT;");
 }
 
 struct MediaDecoder::Impl {
@@ -686,11 +1321,22 @@ int MediaDecoder::read(std::span<float> stereo)
 }
 #else
 bool mediaSupported() { return false; }
-std::optional<MediaLibrary> loadMusicIndex(const std::filesystem::path&, const std::filesystem::path&) { return {}; }
-MediaLibrary scanMusic(const std::filesystem::path&, MediaScanProgress&, std::stop_token,
-                       const std::filesystem::path&) { return {}; }
-std::vector<std::string> removeMissingMusic(const std::filesystem::path&, std::span<const std::string>,
-                                            std::stop_token, const std::filesystem::path&) { return {}; }
+bool initializeMusicIndex(const std::filesystem::path&, const std::filesystem::path&, std::string_view) { return false; }
+std::vector<MusicFolder> musicFolders(const std::filesystem::path&) { return {}; }
+MediaLibrary loadMusicIndex(const std::filesystem::path&) { return {}; }
+MusicIdAliases musicIdAliases(const std::filesystem::path&) { return {}; }
+void addMusicFolder(const std::filesystem::path&, const std::filesystem::path&, std::string_view, std::string_view, std::string_view) {}
+void renameMusicFolder(const std::filesystem::path&, std::string_view, std::string_view, std::optional<std::string_view>) {}
+void setMusicSyncUrl(const std::filesystem::path&, std::string_view, std::string_view) {}
+void setMusicFolderEnabled(const std::filesystem::path&, std::string_view, bool) {}
+void deleteMusicFolder(const std::filesystem::path&, std::string_view, const std::filesystem::path&, std::stop_token) {}
+MediaLibrary scanMusic(MediaScanProgress&, std::stop_token, const std::filesystem::path&) { return {}; }
+std::vector<std::string> removeMissingMusic(std::span<const MusicPath>, std::stop_token, const std::filesystem::path&) { return {}; }
+MusicRelocation previewMusicRelocation(const std::filesystem::path&, std::string_view, std::string_view, std::stop_token,
+                                       const std::optional<MusicLibrarySettings>&)
+{ return {}; }
+void relocateMusicLibrary(const std::filesystem::path&, const MusicRelocation&, const std::filesystem::path&, std::stop_token) {}
+void rekeyMusicIndex(const std::filesystem::path&, const std::filesystem::path&, MediaScanProgress&, std::stop_token) {}
 std::vector<uint8_t> readEmbeddedArtwork(std::string_view, size_t, std::stop_token) { return {}; }
 struct MediaDecoder::Impl {};
 MediaDecoder::MediaDecoder(std::string_view, double, int, std::stop_token) {}

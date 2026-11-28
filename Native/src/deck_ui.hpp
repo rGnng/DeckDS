@@ -32,6 +32,7 @@ public:
     std::optional<MusicScanMode> musicRescanRequested;
     std::optional<bool> musicMissingDecision;
     bool musicFolderSelected = false, musicFolderRequested = false;
+    bool enabledMusicFolders = false;
     Player player;
     bool lid = false;
     bool showKeys = false;
@@ -54,11 +55,11 @@ public:
     void pointer(float x, float y, int phase);
     void wheel(float y);
     void cancelInput();
-    bool loadPreview(std::istream& settings);
+    bool loadPreview(std::istream& settings, const MusicIdAliases& aliases = {});
     void savePreview(std::ostream& settings) const;
     void useMediaLibrary(MediaLibrary library);
     bool musicRemovalPending() const { return missingFileCount != 0; }
-    bool canScanMusic() const { return musicFolderSelected && !musicScan && !musicRemovalPending(); }
+    bool canScanMusic() const { return enabledMusicFolders && !musicScan && !musicRemovalPending(); }
     size_t missingMusicFiles() const { return missingFileCount; }
     uint64_t missingMusicReview() const { return missingReview; }
     bool removingMusicFiles() const { return removingMissingFiles; }

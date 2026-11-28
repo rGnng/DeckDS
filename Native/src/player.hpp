@@ -21,6 +21,8 @@ struct Track {
     uintmax_t bytes = 0;
     int channels = 0, bitDepth = 0;
     bool lossless = false, missing = false;
+    std::string_view libraryId{}, albumId{}, artistId{}, albumArtistId{};
+    bool disabled = false;
 };
 
 struct PlaylistFixture {
@@ -88,6 +90,8 @@ public:
     void chime(std::string_view cue);
     void chime(std::string_view cue, bool release);
     int librarySize() const;
+    int activeLibrarySize() const { return librarySize() - disabledTrackCount; }
+    bool canPlayTrack(int index) const;
     std::array<float, 2> sample(double time) const;
     MediaPlayback::SpectrumInput readSpectrum(std::span<MediaPlayback::Sample> buffer) const;
     MediaPlayback::AudioFormat audioFormat() const;
@@ -96,6 +100,7 @@ private:
     SDL_AudioStream* output = nullptr;
     SDL_AudioStream* speakerStream = nullptr;
     bool mediaLibraryActive = false;
+    int disabledTrackCount = 0;
     std::vector<MediaFile> mediaFiles;
     std::unique_ptr<MediaPlayback> mediaPlayback;
     MediaPlayback::Snapshot currentMedia;

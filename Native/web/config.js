@@ -9,7 +9,7 @@ const next = byId("next");
 const seek = byId("seek");
 const volume = byId("volume");
 const mute = byId("mute");
-const urlEditButtons = { ota: byId("ota-edit"), sync: byId("sync-edit") };
+const otaEdit = byId("ota-edit");
 const accent = byId("accent");
 const accessDialog = byId("web-password-dialog");
 const accessInput = byId("web-password-input");
@@ -25,6 +25,8 @@ const wifiPassword = byId("wifi-password");
 const wifiCancel = byId("wifi-cancel");
 const wifiJoin = byId("wifi-join");
 const wifiJoinError = byId("wifi-join-error");
+const wifiManual = byId("wifi-manual");
+const wifiSsid = byId("wifi-ssid");
 const wifiName = byId("wifi-name");
 const wifiStrength = byId("wifi-strength");
 const wifiIcons = [...byId("wifi-link").querySelectorAll("svg")];
@@ -37,6 +39,12 @@ const bluetoothTooltips = [
     announcement: byId("bluetooth-announcement") },
 ];
 const pairedBluetooth = { list: byId("bluetooth-paired-devices") };
+const libraryEditor = {
+  dialog: byId("library-dialog"),
+  list: byId("library-folders"),
+  pending: false,
+};
+const rekeyDialog = byId("library-rekey-dialog");
 const numbers = new Intl.NumberFormat();
 let current = null;
 let libraryAction = false;
@@ -120,34 +128,18 @@ function show(state) {
   connection.textContent = "Connected";
   signIn.hidden = true;
 
-  const tracks = byId("tracks");
-  tracks.textContent = `${numbers.format(state.tracks)} ${state.tracks === 1 ? "track" : "tracks"}`;
-  tracks.hidden = Boolean(state.scan);
-  showText("folder", state.folder || "Choose a music folder in DeckDS.");
   const queued = state.playback?.queued || 0;
   const idleTitle = queued ? `${numbers.format(queued)} ${queued === 1 ? "track" : "tracks"} queued` : "Queue empty";
   showText("track", state.track || idleTitle);
   showText("artist", state.track ? state.artist || "" : "");
   showPlayback(state.playback);
   showText("ota-url", state.ota?.url || "Not set");
-  for (const [key, button] of Object.entries(urlEditButtons))
-    button.disabled = !state[key];
-  byId("scan").hidden = !state.scan;
-  if (state.scan) {
-    const { checked, total, full } = state.scan;
-    const percent = total ? Math.min(99, Math.floor(100 * checked / total)) : 0;
-    byId("percent").textContent = `${percent}%`;
-    byId("bar").value = percent;
-    showText("library-message", `${full ? "Full Scan" : "Quick Scan"} (${numbers.format(checked)} / ${total ? numbers.format(total) : "?"})`);
-  } else if (!libraryAction) {
-    showText("library-message", libraryError || state.message || (state.canScan ? "Ready to scan" : "Scan unavailable"));
-  }
+  otaEdit.disabled = !state.ota;
 
   byId("review").hidden = !state.missing;
   byId("missing").textContent = state.removing ? "Removing entries…" :
     `${numbers.format(state.missing)} ${state.missing === 1 ? "file was" : "files were"} not found.`;
   byId("review-question").hidden = state.removing;
-  scanButtons.forEach((button) => { button.disabled = libraryAction || !state.canScan; });
   reviewButtons.forEach((button) => { button.disabled = libraryAction || state.removing; });
 
   if (state.settings.theme !== accentTheme && state.accents?.some(Boolean)) {
@@ -160,6 +152,7 @@ function show(state) {
     if (!field.disabled) field.value = String(state.settings[field.dataset.setting]);
   });
   showConnectivity();
+  showLibraryConfig();
   showPasswordStatus();
 }
 
@@ -187,8 +180,9 @@ async function poll() {
     connection.textContent = signIn.hidden ? "Reconnecting…" : "Sign-in required";
     showPlayback(null);
     showConnectivity();
+    showLibraryConfig();
     showPasswordStatus();
-    for (const button of Object.values(urlEditButtons)) button.disabled = true;
+    otaEdit.disabled = true;
     [...scanButtons, ...reviewButtons, ...settings].forEach((field) => { field.disabled = true; });
   } finally {
     setTimeout(poll, 400);
@@ -347,7 +341,7 @@ function showDeviceList(panel, items, row, busy) {
     panel.list.replaceChildren(...items.map(row));
     panel.signature = signature;
   }
-  panel.list.querySelectorAll("button").forEach((button) => { button.disabled = busy; });
+  panel.list.querySelectorAll("button").forEach((button) => { button.disabled = busy || button.hasAttribute("data-unavailable"); });
 }
 
 function showConnectivity() {
@@ -355,6 +349,7 @@ function showConnectivity() {
   const wifiState = current?.wifi;
   const wifiBusy = !wifiState?.supported || wifiState.busy || wifi.pending;
   wifi.scan.disabled = Boolean(wifiBusy);
+  wifiManual.disabled = Boolean(wifiBusy);
   showDeviceList(wifi, wifiState?.networks, wifiRow, wifiBusy);
   if (wifiState) {
     wifi.message.textContent = wifi.error || wifiState.message;
@@ -413,21 +408,28 @@ for (const [name, panel] of Object.entries(connectivity)) {
   });
 }
 
-function showWifiJoin(network) {
-  wifiTarget = network;
-  byId("wifi-target").textContent = network.name;
-  wifiPassword.required = network.security !== "open";
-  byId("wifi-password-field").hidden = !wifiPassword.required;
+function showWifiJoin(network = null) {
+  wifiTarget = network || { manual: true };
+  const name = byId("wifi-target");
+  name.hidden = !network;
+  name.textContent = network?.name || "";
+  byId("wifi-ssid-field").hidden = Boolean(network);
+  wifiSsid.required = !network;
+  wifiSsid.value = "";
+  wifiPassword.required = Boolean(network && network.security !== "open");
+  byId("wifi-password-field").hidden = Boolean(network && !wifiPassword.required);
   wifiPassword.value = "";
   wifiJoinError.textContent = "";
   wifiBrowser.hidden = true;
   wifiForm.hidden = false;
   wifiDialog.setAttribute("aria-labelledby", "wifi-join-title");
-  (wifiPassword.required ? wifiPassword : wifiJoin).focus();
+  (network ? (wifiPassword.required ? wifiPassword : wifiJoin) : wifiSsid).focus();
 }
 
 function showWifiNetworks() {
   wifiPassword.value = "";
+  wifiSsid.value = "";
+  wifiSsid.required = false;
   wifiTarget = null;
   wifiForm.hidden = true;
   wifiBrowser.hidden = false;
@@ -439,6 +441,7 @@ byId("wifi-open").addEventListener("click", () => {
   showWifiNetworks();
   wifiDialog.showModal();
 });
+wifiManual.addEventListener("click", () => showWifiJoin());
 wifiClose.addEventListener("click", () => wifiDialog.close());
 wifiCancel.addEventListener("click", showWifiNetworks);
 wifiDialog.addEventListener("cancel", (event) => {
@@ -451,12 +454,18 @@ wifiDialog.addEventListener("close", showWifiNetworks);
 wifiForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!wifiTarget || wifiJoin.disabled) return;
-  wifiJoin.disabled = wifiCancel.disabled = wifiPassword.disabled = true;
   wifiJoinError.textContent = "";
-  const joined = await networkAction("wifi", "connect", `${wifiTarget.id}\n${wifiPassword.value}`);
+  if (wifiTarget.manual && new TextEncoder().encode(wifiSsid.value).length > 32) {
+    wifiJoinError.textContent = "Enter a network name of up to 32 bytes.";
+    return;
+  }
+  wifiJoin.disabled = wifiCancel.disabled = wifiPassword.disabled = wifiSsid.disabled = true;
+  const action = wifiTarget.manual ? "manual" : "connect";
+  const target = wifiTarget.manual ? wifiSsid.value : wifiTarget.id;
+  const joined = await networkAction("wifi", action, `${target}\n${wifiPassword.value}`);
   if (joined) showWifiNetworks();
   else wifiJoinError.textContent = connectivity.wifi.error || "Wi-Fi is unavailable.";
-  wifiJoin.disabled = wifiCancel.disabled = wifiPassword.disabled = false;
+  wifiJoin.disabled = wifiCancel.disabled = wifiPassword.disabled = wifiSsid.disabled = false;
 });
 
 byId("bluetooth-open").addEventListener("click", () => {
@@ -467,16 +476,285 @@ byId("bluetooth-open").addEventListener("click", () => {
 byId("bluetooth-close").addEventListener("click", () => bluetoothDialog.close());
 bluetoothDialog.addEventListener("close", showConnectivity);
 
-function bindUrlEditor(key, path, label) {
-  const dialog = byId(`${key}-dialog`);
-  const input = byId(`${key}-input`);
-  const save = byId(`${key}-save`);
-  const cancel = byId(`${key}-cancel`);
-  const feedback = byId(`${key}-error`);
-  const ota = key === "ota";
+function libraryFolderRow(folder) {
+  const sync = deviceButton("Sync", folder.identifier, null);
+  sync.setAttribute("data-unavailable", "");
+  const row = deviceRow({ name: folder.identifier }, folder.root, [
+    deviceButton("Edit", folder.identifier, () => editLibraryFolder("rename", folder)),
+    sync,
+  ]);
+  row.classList.add("library-row");
+  const title = row.firstElementChild.firstElementChild;
+  title.classList.add("library-row-title");
+  const name = document.createElement("span");
+  name.className = "text-truncate";
+  name.textContent = folder.identifier;
+  const namespace = document.createElement("span");
+  namespace.className = "library-row-namespace text-truncate";
+  namespace.textContent = `Namespace ${folder.namespace || "—"}`;
+  namespace.title = folder.namespace;
+  title.replaceChildren(name, namespace);
+  if (folder.enabled === false) {
+    const path = title.nextElementSibling;
+    path.classList.add("d-flex", "gap-2");
+    const location = document.createElement("span");
+    location.className = "text-truncate";
+    location.textContent = folder.root;
+    const status = document.createElement("span");
+    status.className = "flex-shrink-0";
+    status.textContent = "Disabled";
+    path.replaceChildren(location, status);
+  }
+  return row;
+}
 
-  urlEditButtons[key].addEventListener("click", () => {
-    input.value = current[key].url;
+function editedLibrary() {
+  return current?.libraryConfig?.folders?.find((folder) => folder.id === libraryEditor.folder?.id);
+}
+
+function showLibraryConfig() {
+  const state = current?.libraryConfig;
+  const busy = !state?.supported || state.busy || libraryEditor.pending || libraryAction;
+  const folders = state?.folders;
+  byId("library-add").disabled = busy;
+  byId("library-rekey").disabled = busy || !folders?.length;
+  byId("library-rekey-confirm").disabled = busy || !folders?.length;
+  byId("library-edit-save").disabled = busy;
+  const edited = editedLibrary();
+  const disabled = edited?.enabled === false;
+  byId("library-toggle").textContent = disabled ? "Enable" : "Disable";
+  byId("library-toggle").disabled = busy || !edited;
+  byId("library-delete").disabled = byId("library-delete-confirm").disabled = busy || !disabled;
+  byId("library-apply").disabled = busy || !state?.preview || state.preview.token !== libraryEditor.token;
+  for (const id of ["library-edit-back", "library-preview-back", "library-rekey-cancel", "library-delete-back"])
+    byId(id).disabled = libraryEditor.pending;
+  showDeviceList(libraryEditor, folders, libraryFolderRow, busy);
+  if (folders) {
+    libraryEditor.list.hidden = folders.length === 0;
+    byId("folder").hidden = folders.length !== 0;
+  }
+  scanButtons.forEach((button) => { button.disabled = libraryAction || libraryEditor.pending || !current?.canScan; });
+  if (!current) return;
+
+  const progress = state?.rekey || current.scan;
+  const error = !progress && (libraryEditor.error || libraryError || state?.error);
+  const tracks = byId("tracks");
+  tracks.textContent = `Ready, ${numbers.format(current.tracks)} ${current.tracks === 1 ? "track" : "tracks"}`;
+  tracks.hidden = Boolean(progress || error);
+  byId("scan").hidden = !progress;
+  const feedback = byId("library-message");
+  feedback.classList.toggle("visually-hidden", !error);
+  feedback.classList.toggle("text-danger", Boolean(error));
+  if (progress) {
+    const { checked, total, full } = progress;
+    const action = state?.rekey ? "ReKey" : full ? "Full Scan" : "Quick Scan";
+    const percent = total ? Math.min(99, Math.floor(100 * checked / total)) : 0;
+    byId("percent").textContent = `${percent}%`;
+    byId("bar").value = percent;
+    byId("bar").setAttribute("aria-label", `${action} progress`);
+    byId("bar").setAttribute("aria-valuetext", total ? `${numbers.format(checked)} of ${numbers.format(total)} tracks` : "Preparing");
+    showText("library-message", "");
+  } else if (!libraryAction) {
+    const message = error || state?.message || current.message || "";
+    showText("library-message", message);
+    tracks.title = state?.backup && !error ? `${message} Backup at ${state.backup}` : message;
+  }
+}
+
+function showLibraryView(view, title) {
+  const views = { edit: "library-edit-form", preview: "library-preview-view", delete: "library-delete-view" };
+  const heading = `library-${view}-heading`;
+  for (const [name, id] of Object.entries(views)) byId(id).hidden = name !== view;
+  byId(heading).textContent = title;
+  libraryEditor.dialog.setAttribute("aria-labelledby", heading);
+  showLibraryConfig();
+}
+
+function editLibraryFolder(action, folder) {
+  const path = byId("library-path");
+  const identifier = byId("library-identifier");
+  const syncUrl = byId("library-sync-url");
+  const add = action === "add";
+  libraryEditor.action = action;
+  libraryEditor.folder = folder;
+  byId("library-path-field").hidden = !add;
+  byId("library-relocate-field").hidden = add;
+  byId("library-state-actions").hidden = add;
+  path.value = "";
+  path.required = add;
+  identifier.value = folder?.identifier || "";
+  identifier.required = !add;
+  syncUrl.value = folder?.syncUrl || "";
+  byId("library-relocate-path").value = "";
+  byId("library-edit-message").textContent = "";
+  byId("library-edit-save").textContent = add ? "Add" : "Save";
+  showLibraryView("edit", add ? "Add Library" : "Edit Library");
+  libraryEditor.dialog.showModal();
+  (add ? path : identifier).focus();
+}
+
+async function runLibraryAction(action, body = "", onAccepted) {
+  if (libraryEditor.pending || libraryAction || !current?.libraryConfig?.supported || current.libraryConfig.busy)
+    throw new Error("Wait for the current library operation to finish.");
+  const { revision } = current.libraryConfig;
+  libraryEditor.error = libraryError = "";
+  libraryEditor.pending = true;
+  showLibraryConfig();
+  try {
+    await request(`/api/library/manage/${action}`, body);
+    onAccepted?.();
+    let inactivePolls = 0;
+    while (inactivePolls < 10) {
+      const { libraryConfig: result } = await refresh();
+      if (result.revision !== revision) {
+        if (result.error) throw new Error(result.error);
+        return result;
+      }
+      inactivePolls = result.busy ? 0 : inactivePolls + 1;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    throw new Error("DeckDS has not confirmed the library operation.");
+  } finally {
+    libraryEditor.pending = false;
+    showLibraryConfig();
+  }
+}
+
+function showRelocationPreview(result) {
+  const preview = result.preview;
+  if (!preview) throw new Error("The library preview is unavailable.");
+  libraryEditor.token = preview.token;
+  byId("library-preview-items").replaceChildren(...preview.unmatched.map((item) => {
+    const row = document.createElement("li");
+    row.textContent = item;
+    return row;
+  }));
+  const count = (value, one, many = `${one}s`) => `${numbers.format(value)} ${value === 1 ? one : many}`;
+  byId("library-preview-summary").textContent =
+    `${count(preview.matched, "file")} matched. ${count(preview.missing, "unmatched entry", "unmatched entries")} will be kept for review.`;
+  showText("library-preview-destination", preview.destination);
+  const report = byId("library-preview-report");
+  report.href = `/api/library/unmatched?preview=${preview.token}`;
+  report.hidden = !preview.missing;
+  byId("library-preview-message").textContent = "";
+  byId("library-apply").textContent = "Relocate";
+  showLibraryView("preview", "Preview Relocation");
+  byId("library-preview-back").focus();
+}
+
+byId("library-add").addEventListener("click", () => editLibraryFolder("add", null));
+byId("library-edit-back").addEventListener("click", () => libraryEditor.dialog.close());
+byId("library-preview-back").addEventListener("click", () => {
+  showLibraryView("edit", "Edit Library");
+  byId("library-relocate-path").focus();
+});
+byId("library-toggle").addEventListener("click", async () => {
+  const folder = editedLibrary();
+  if (!folder) return;
+  showText("library-edit-message", "");
+  try {
+    await runLibraryAction(folder.enabled === false ? "enable" : "disable", folder.id);
+  } catch (error) {
+    showText("library-edit-message", error.message);
+  }
+});
+byId("library-delete").addEventListener("click", () => {
+  const folder = editedLibrary();
+  if (folder?.enabled !== false) return;
+  showText("library-delete-name", folder.identifier);
+  showText("library-delete-message", "");
+  showLibraryView("delete", "Delete Library?");
+  byId("library-delete-back").focus();
+});
+byId("library-delete-back").addEventListener("click", () => {
+  showLibraryView("edit", "Edit Library");
+  byId("library-delete").focus();
+});
+byId("library-delete-confirm").addEventListener("click", async () => {
+  const folder = editedLibrary();
+  if (folder?.enabled !== false) return;
+  try {
+    await runLibraryAction("delete", folder.id);
+    libraryEditor.dialog.close();
+  } catch (error) {
+    showText("library-delete-message", error.message);
+  }
+});
+for (const dialog of [libraryEditor.dialog, rekeyDialog]) {
+  dialog.addEventListener("cancel", (event) => {
+    if (libraryEditor.pending) event.preventDefault();
+  });
+}
+byId("library-rekey").addEventListener("click", () => {
+  showText("library-rekey-error", "");
+  rekeyDialog.showModal();
+});
+byId("library-rekey-cancel").addEventListener("click", () => rekeyDialog.close());
+byId("library-rekey-confirm").addEventListener("click", async () => {
+  showText("library-rekey-error", "");
+  try {
+    await runLibraryAction("rekey", "", () => rekeyDialog.close());
+  } catch (error) {
+    if (rekeyDialog.open) showText("library-rekey-error", error.message);
+    else {
+      libraryEditor.error = error.message;
+      showLibraryConfig();
+    }
+  }
+});
+byId("library-edit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const { action, folder } = libraryEditor;
+  const add = action === "add";
+  const destination = byId("library-relocate-path").value;
+  const relocate = !add && destination.trim() !== "";
+  const values = [add ? byId("library-path").value : folder.id];
+  showText("library-edit-message", "");
+  const url = networkUrl(byId("library-sync-url").value);
+  if (url === null) {
+    showText("library-edit-message", "Enter a Sync URL with a server address.");
+    return;
+  }
+  if (relocate) values.push(destination);
+  values.push(byId("library-identifier").value, url);
+  try {
+    const result = await runLibraryAction(relocate ? "relocate-preview" : action, values.join("\n"));
+    if (relocate) showRelocationPreview(result);
+    else libraryEditor.dialog.close();
+  } catch (error) {
+    showText("library-edit-message", error.message);
+  }
+});
+byId("library-apply").addEventListener("click", async () => {
+  try {
+    await runLibraryAction("apply", String(libraryEditor.token));
+    libraryEditor.dialog.close();
+  } catch (error) {
+    showText("library-preview-message", error.message);
+  }
+});
+
+function networkUrl(value, httpOnly = false) {
+  const raw = value.trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (url.hostname && (!httpOnly || url.protocol === "http:" || url.protocol === "https:")) return url.href;
+  } catch {
+    // The field error also covers invalid URLs.
+  }
+  return null;
+}
+
+function bindOtaUrlEditor() {
+  const dialog = byId("ota-dialog");
+  const input = byId("ota-input");
+  const save = byId("ota-save");
+  const cancel = byId("ota-cancel");
+  const feedback = byId("ota-error");
+
+  otaEdit.addEventListener("click", () => {
+    input.value = current.ota.url;
     feedback.textContent = "";
     dialog.showModal();
   });
@@ -485,38 +763,28 @@ function bindUrlEditor(key, path, label) {
     if (save.disabled) event.preventDefault();
   });
 
-  byId(`${key}-form`).addEventListener("submit", async (event) => {
+  byId("ota-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (save.disabled) return;
     feedback.textContent = "";
-    const raw = input.value.trim();
-    let url = "";
-    if (raw) {
-      try {
-        const parsed = new URL(raw);
-        const http = parsed.protocol === "http:" || parsed.protocol === "https:";
-        if (parsed.hostname && (!ota || http)) url = parsed.href;
-      } catch {
-        // The field error below also covers invalid URLs.
-      }
-      if (!url) {
-        feedback.textContent = ota ? "Enter a valid HTTP or HTTPS URL." : "Enter a URL with a server address.";
-        return;
-      }
+    const url = networkUrl(input.value, true);
+    if (url === null) {
+      feedback.textContent = "Enter a valid HTTP or HTTPS URL.";
+      return;
     }
-    if (!current?.[key]) {
+    if (!current?.ota) {
       feedback.textContent = "DeckDS is unavailable.";
       return;
     }
-    const { revision } = current[key];
+    const { revision } = current.ota;
     input.disabled = save.disabled = cancel.disabled = true;
     try {
-      await request(path, url);
+      await request("/api/ota/url", url);
       for (let attempt = 0; attempt < 20; attempt++) {
-        const setting = (await refresh())[key];
+        const setting = (await refresh()).ota;
         if (setting.revision !== revision) {
           if (setting.error) throw new Error(setting.error);
-          if (setting.url !== url) throw new Error(`The saved ${label} changed. Try again.`);
+          if (setting.url !== url) throw new Error("The saved OTA URL changed. Try again.");
           dialog.close();
           return;
         }
@@ -532,8 +800,7 @@ function bindUrlEditor(key, path, label) {
   });
 }
 
-bindUrlEditor("ota", "/api/ota/url", "OTA URL");
-bindUrlEditor("sync", "/api/library/sync-url", "library sync URL");
+bindOtaUrlEditor();
 
 async function changePlayback(action, body = "", group = "transport") {
   if (!current?.playback?.available) return;
@@ -597,7 +864,8 @@ bindPlaybackRange(volume, "volume", (value) => { byId("volume-value").textConten
 async function changeLibrary(path, body) {
   if (libraryAction) return;
   libraryAction = true;
-  libraryError = "";
+  libraryEditor.error = libraryError = "";
+  showLibraryConfig();
   [...scanButtons, ...reviewButtons].forEach((button) => { button.disabled = true; });
   try {
     await request(path, body);

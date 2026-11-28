@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media.hpp"
 #include "wifi.hpp"
 
 #include <array>
@@ -26,6 +27,7 @@ struct WebConfigState {
     };
     struct Playback {
         std::string trackId;
+        std::string libraryId, albumId, artistId, albumArtistId;
         int64_t positionMs = 0, durationMs = 0;
         int volume = 0;
         size_t queued = 0;
@@ -48,6 +50,20 @@ struct WebConfigState {
         std::string_view message;
         bool supported = false, busy = false, scanning = false, demo = false, error = false;
     };
+    struct LibraryConfig {
+        struct Preview {
+            std::string destination;
+            uint64_t token = 0;
+            size_t matched = 0, missing = 0;
+            std::vector<std::string> unmatched;
+        };
+        std::vector<MusicFolder> folders;
+        std::optional<Preview> preview;
+        std::optional<Scan> rekey;
+        std::string message, error, backup;
+        uint64_t revision = 0;
+        bool supported = false, busy = false;
+    };
     std::string folder, track, artist, message;
     size_t tracks = 0, missing = 0;
     uint64_t review = 0;
@@ -56,9 +72,10 @@ struct WebConfigState {
     WebSettings settings{};
     std::array<std::string_view, 4> accents{};
     Playback playback{};
-    UrlSetting ota{}, sync{};
+    UrlSetting ota{};
     Wifi wifi{};
     Bluetooth bluetooth{};
+    LibraryConfig libraryConfig{};
 };
 
 struct WebDebugState {
@@ -111,8 +128,9 @@ struct WebPlaybackCommand {
 
 struct WebConfigCommand {
     enum class Type {
-        QuickScan, FullScan, KeepMissing, RemoveMissing, Setting, Playback, OtaUrl, SyncUrl,
-        WifiScan, WifiConnect, BluetoothRefreshPaired, BluetoothScan, BluetoothConnect, BluetoothForget
+        QuickScan, FullScan, KeepMissing, RemoveMissing, Setting, Playback, OtaUrl,
+        WifiScan, WifiConnect, WifiConnectManual, BluetoothRefreshPaired, BluetoothScan, BluetoothConnect, BluetoothForget,
+        LibraryAdd, LibraryRename, LibrarySyncUrl, LibrarySetEnabled, LibraryDelete, LibraryRekey, LibraryPreviewRelocate, LibraryApply
     } type;
     uint64_t review = 0;
     WebSetting setting = WebSetting::Theme;
@@ -121,6 +139,7 @@ struct WebConfigCommand {
     std::string url{};
     int theme = 0;
     std::string target{}, wifiPassword{};
+    std::optional<MusicLibrarySettings> librarySettings{};
 };
 
 class WebConfig {
@@ -129,11 +148,12 @@ public:
     ~WebConfig();
     static bool supported();
     bool running() const;
-    bool start(const std::filesystem::path& preferences);
+    bool start(const std::filesystem::path& preferences, const WebConfigState& initial);
     void stop();
     std::string error() const;
     void publish(const WebConfigState& state);
     void publishDebug(const WebDebugState& state);
+    void publishLibraryReport(uint64_t token, std::string report);
     std::vector<WebConfigCommand> takeCommands();
 
 private:

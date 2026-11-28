@@ -65,26 +65,31 @@
           </div>
         </section>
 
-        <section class="card" aria-labelledby="library-heading">
+        <section class="card library-card" aria-labelledby="library-heading">
           <div class="card-body">
             <div class="library-title">
-              <h2 class="h6 mb-0" id="library-heading">Music Library</h2>
+              <h2 class="h6 mb-0" id="library-heading">Library</h2>
               <div class="library-title-status small font-monospace text-body-secondary">
                 <strong id="tracks" class="text-truncate"></strong>
                 <div id="scan" class="library-title-progress" hidden>
                   <progress max="100" value="0" id="bar" aria-label="Library scan progress"></progress>
                   <span id="percent" aria-hidden="true"></span>
                 </div>
+                <span id="library-message" class="visually-hidden text-truncate" role="status"></span>
+              </div>
+              <div class="library-title-actions d-flex gap-1">
+                <button id="library-add" class="btn btn-sm btn-outline-secondary" type="button"
+                        aria-haspopup="dialog" disabled>Add</button>
+                <button id="library-rekey" class="btn btn-sm btn-outline-secondary" type="button"
+                        aria-haspopup="dialog" disabled>ReKey</button>
               </div>
             </div>
-            <p id="folder" class="small text-truncate font-monospace text-body-secondary mt-1 mb-2"></p>
-            <div class="d-flex flex-wrap gap-1 scan-actions">
+            <ul id="library-folders" class="device-list list-unstyled mt-1 mb-2" aria-label="Libraries" hidden></ul>
+            <p id="folder" class="small text-body-secondary mt-1 mb-2">No libraries</p>
+            <div class="d-flex flex-wrap gap-1 scan-actions" role="group" aria-label="Library scans">
               <button id="quick" class="btn btn-sm btn-primary" type="button" disabled>Quick Scan</button>
               <button id="full" class="btn btn-sm btn-outline-secondary" type="button" disabled>Full Scan</button>
-              <button class="btn btn-sm btn-outline-secondary" type="button" id="sync-edit"
-                      aria-haspopup="dialog" disabled>Sync Config</button>
             </div>
-            <p id="library-message" class="library-feedback small text-body-secondary text-truncate mt-2 mb-0" role="status"></p>
             <section class="border-top pt-2 mt-2" id="review" aria-labelledby="review-heading" hidden>
               <h3 class="h6 mb-1" id="review-heading">Missing Files</h3>
               <p class="mb-1" id="missing"></p>
@@ -192,17 +197,69 @@
       </section>
     </div>
   </main>
-  <dialog id="sync-dialog" aria-labelledby="sync-heading">
-    <form id="sync-form" class="p-3 p-sm-4">
-      <h2 class="h5 mb-3" id="sync-heading">Library Sync</h2>
-      <label class="form-label" for="sync-input">Sync URL</label>
-      <input class="form-control" id="sync-input" type="url" maxlength="2048" spellcheck="false" autofocus>
-      <p id="sync-error" class="feedback text-danger small mt-2 mb-0" role="alert"></p>
-      <div class="d-flex justify-content-end gap-2 mt-3">
-        <button class="btn btn-outline-secondary" type="button" id="sync-cancel">Cancel</button>
-        <button class="btn btn-primary" type="submit" id="sync-save">Save</button>
+  <dialog id="library-rekey-dialog" aria-labelledby="library-rekey-heading" aria-describedby="library-rekey-description">
+    <div class="p-3 p-sm-4">
+      <h2 id="library-rekey-heading" class="h5 mb-2">ReKey Database?</h2>
+      <p id="library-rekey-description" class="small mb-2">Recalculate song, album, and artist IDs for every library. DeckDS backs up the database and carries over playlists, favorites, and playback history.</p>
+      <p id="library-rekey-error" class="library-feedback small text-danger text-truncate mb-0" role="alert"></p>
+      <div class="d-flex justify-content-end gap-2 mt-2">
+        <button id="library-rekey-cancel" type="button" class="btn btn-outline-secondary" autofocus>Cancel</button>
+        <button id="library-rekey-confirm" type="button" class="btn btn-outline-danger">ReKey</button>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="library-dialog" aria-labelledby="library-edit-heading">
+    <form id="library-edit-form" class="p-3 p-sm-4" hidden>
+      <h2 id="library-edit-heading" class="h5 mb-3"></h2>
+      <div id="library-path-field" class="mb-2">
+        <label class="form-label" for="library-path">Folder path on DeckDS</label>
+        <input id="library-path" class="form-control" maxlength="4096" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="library-identifier-field" class="mb-2">
+        <label class="form-label" for="library-identifier">Library identifier</label>
+        <input id="library-identifier" class="form-control" maxlength="128" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="mb-2">
+        <label class="form-label" for="library-sync-url">Sync URL</label>
+        <input id="library-sync-url" class="form-control" type="url" maxlength="2048" autocomplete="url" spellcheck="false">
+      </div>
+      <div id="library-relocate-field" hidden>
+        <label class="form-label" for="library-relocate-path">Relocate to</label>
+        <input id="library-relocate-path" class="form-control" maxlength="4096" placeholder="Absolute folder path" autocomplete="off" spellcheck="false">
+      </div>
+      <p id="library-edit-message" class="library-feedback small text-danger text-truncate mt-2 mb-0" role="alert"></p>
+      <div id="library-state-actions" class="d-flex gap-2 mt-2" hidden>
+        <button id="library-toggle" type="button" class="btn btn-sm btn-outline-secondary">Disable</button>
+        <button id="library-delete" type="button" class="btn btn-sm btn-outline-danger" disabled>Delete</button>
+      </div>
+      <div class="d-flex justify-content-end gap-2 mt-2">
+        <button id="library-edit-back" type="button" class="btn btn-outline-secondary">Cancel</button>
+        <button id="library-edit-save" type="submit" class="btn btn-primary">Save</button>
       </div>
     </form>
+    <div id="library-preview-view" class="p-3 p-sm-4" hidden>
+      <h2 id="library-preview-heading" class="h5 mb-2"></h2>
+      <p id="library-preview-summary" class="small mb-2"></p>
+      <p id="library-preview-destination" class="device-name small text-body-secondary mb-2" hidden></p>
+      <ul id="library-preview-items" class="library-preview-items small list-unstyled mb-2"></ul>
+      <a id="library-preview-report" class="btn btn-sm btn-outline-secondary" href="/api/library/unmatched"
+         download="unmatched-music-files.txt" hidden>Download unmatched paths</a>
+      <p id="library-preview-message" class="library-feedback small text-danger text-truncate mt-2 mb-0" role="alert"></p>
+      <div class="d-flex justify-content-end gap-2 mt-2">
+        <button id="library-preview-back" type="button" class="btn btn-outline-secondary">Back</button>
+        <button id="library-apply" type="button" class="btn btn-primary">Apply</button>
+      </div>
+    </div>
+    <div id="library-delete-view" class="p-3 p-sm-4" hidden>
+      <h2 id="library-delete-heading" class="h5 mb-2">Delete Library?</h2>
+      <p id="library-delete-name" class="small fw-semibold text-truncate mb-2"></p>
+      <p class="small mb-2">Delete this library’s index and its tracks from playlists. Audio files stay on disk.</p>
+      <p id="library-delete-message" class="library-feedback small text-danger text-truncate mb-0" role="alert"></p>
+      <div class="d-flex justify-content-end gap-2 mt-2">
+        <button id="library-delete-back" type="button" class="btn btn-outline-secondary">Back</button>
+        <button id="library-delete-confirm" type="button" class="btn btn-outline-danger">Delete Library</button>
+      </div>
+    </div>
   </dialog>
   <dialog id="ota-dialog" aria-labelledby="ota-heading">
     <form id="ota-form" class="p-3 p-sm-4">
@@ -253,7 +310,10 @@
           <span id="wifi-name" class="text-truncate">Not connected</span>
           <span id="wifi-strength" class="text-body-secondary" hidden></span>
         </div>
-        <button id="wifi-scan" type="button" class="btn btn-sm btn-outline-secondary" disabled>Scan</button>
+        <div class="d-flex gap-1 flex-shrink-0">
+          <button id="wifi-manual" type="button" class="btn btn-sm btn-outline-secondary" disabled>Manual</button>
+          <button id="wifi-scan" type="button" class="btn btn-sm btn-outline-secondary" disabled>Scan</button>
+        </div>
       </div>
       <p id="wifi-message" class="wifi-feedback small text-body-secondary mt-2 mb-0" role="status"></p>
       <ul id="wifi-networks" class="device-list list-unstyled mb-0"></ul>
@@ -262,11 +322,15 @@
       <h2 class="h5 mb-2" id="wifi-join-title">Join Wi-Fi Network</h2>
       <p id="wifi-target" class="device-name fw-semibold mb-2"></p>
       <p class="text-body-secondary small mb-3">Changing networks may disconnect this page.</p>
+      <div id="wifi-ssid-field" class="mb-2" hidden>
+        <label class="form-label" for="wifi-ssid">Network name (SSID)</label>
+        <input class="form-control" id="wifi-ssid" maxlength="32" autocomplete="off" spellcheck="false">
+      </div>
       <div id="wifi-password-field">
         <label class="form-label" for="wifi-password">Wi-Fi password</label>
         <input class="form-control" id="wifi-password" type="password" maxlength="128" autocomplete="off">
       </div>
-      <p id="wifi-join-error" class="feedback text-danger small mt-2 mb-0" role="alert"></p>
+      <p id="wifi-join-error" class="wifi-feedback text-danger small mt-2 mb-0" role="alert"></p>
       <div class="d-flex justify-content-end gap-2 mt-3">
         <button class="btn btn-outline-secondary" type="button" id="wifi-cancel">Back</button>
         <button class="btn btn-primary" type="submit" id="wifi-join">Join</button>

@@ -850,8 +850,13 @@ void DeckUi::rebuildCatalogCache() const
         const auto& t = player.tracks[index];
         const std::string_view name = type == Tab::Albums ? t.album : t.artist;
         const std::string_view albumArtist = type == Tab::Albums ? t.albumArtist : std::string_view{};
-        const auto [match, inserted] = groups.try_emplace({name, albumArtist}, cachedRows.size());
-        const bool newArtistAlbum = type == Tab::Artists && artistAlbums.emplace(t.artist, t.album, t.albumArtist).second;
+        const auto id = type == Tab::Albums ? t.albumId : t.artistId;
+        const auto key = id.empty() ? std::pair{name, albumArtist} : std::pair{id, std::string_view{}};
+        const auto [match, inserted] = groups.try_emplace(key, cachedRows.size());
+        const bool newArtistAlbum = type == Tab::Artists && artistAlbums.emplace(
+            t.artistId.empty() ? t.artist : t.artistId,
+            t.albumId.empty() ? t.album : t.albumId,
+            t.albumId.empty() ? t.albumArtist : std::string_view{}).second;
         if (inserted) {
             Row r;
             r.title = std::string(name);
@@ -931,7 +936,7 @@ void DeckUi::rebuildCatalogCache() const
         starred.source = Tab::Playlists;
         starred.playlist = -1;
         for (int i = 0; i < player.librarySize(); ++i)
-            if (player.stars[i])
+            if (player.stars[i] && player.canPlayTrack(i))
                 starred.ids.push_back(i);
         if (!starred.ids.empty())
             starred.cover = starred.ids.front();
@@ -940,14 +945,16 @@ void DeckUi::rebuildCatalogCache() const
             const auto& list = player.playlists[i];
             Row r;
             r.title = list.name;
-            r.ids = list.tracks;
-            r.cover = list.tracks.empty() ? -1 : list.tracks.front();
+            std::ranges::copy_if(list.tracks, std::back_inserter(r.ids), [&](int track) { return player.canPlayTrack(track); });
+            r.cover = r.ids.empty() ? -1 : r.ids.front();
             r.source = Tab::Playlists;
             r.playlist = static_cast<int>(i);
             cachedRows.push_back(std::move(r));
         }
     } else if (tab != Tab::Deck) {
         for (int i = 0; i < player.librarySize(); ++i) {
+            if (!player.canPlayTrack(i))
+                continue;
             if (tab == Tab::Songs)
                 addTrack(i);
             else
@@ -2714,7 +2721,10 @@ void DeckUi::openAlbum(int index)
     setTab(static_cast<int>(Tab::Albums));
     const auto& collection = rows();
     const auto found = std::ranges::find_if(collection, [&](const Row& row) {
-        return row.title == current.album && player.tracks[row.cover].albumArtist == current.albumArtist;
+        const auto& cover = player.tracks[row.cover];
+        if (!current.albumId.empty() && !cover.albumId.empty())
+            return current.albumId == cover.albumId;
+        return row.title == current.album && cover.albumArtist == current.albumArtist;
     });
     if (found != collection.end())
         selectRow(static_cast<int>(found - collection.begin()));
@@ -4243,6 +4253,10 @@ WebConfigState::Playback DeckUi::webPlayback() const
     if (track) {
         const auto duration = std::max(track->duration, 0);
         state.trackId = track->id;
+        state.libraryId = track->libraryId;
+        state.albumId = track->albumId;
+        state.artistId = track->artistId;
+        state.albumArtistId = track->albumArtistId;
         state.durationMs = static_cast<int64_t>(duration) * 1000;
         state.positionMs = std::llround(std::clamp(player.seconds, 0.0, static_cast<double>(duration)) * 1000);
     }

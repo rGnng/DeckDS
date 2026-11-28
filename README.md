@@ -40,7 +40,7 @@ Run with `--long-metadata` to preview a track with long English and Japanese nam
 
 ### Local music library
 
-Install FFmpeg and SQLite development libraries and pkg-config, then configure and rebuild. On macOS, use `brew install ffmpeg pkgconf` and the SQLite library from the macOS SDK. On Debian or Ubuntu, install `pkg-config libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libsqlite3-dev`.
+Install FFmpeg and SQLite development libraries and pkg-config, then configure and rebuild. On macOS, use `brew install ffmpeg pkgconf` and the SQLite library from the macOS SDK. On Debian or Ubuntu, install `pkg-config libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libsqlite3-dev libicu-dev`.
 
 ```sh
 open -n Native/build/DeckDS.app --args --music-path "/path/to/Music"
@@ -48,7 +48,7 @@ open -n Native/build/DeckDS.app --args --music-path "/path/to/Music"
 Native/build/DeckDS --music-path "/path/to/Music"
 ```
 
-Use **Music Folder** in the preview’s left column to choose the single active library folder. DeckDS opens the last catalog from `library.sqlite` in its local preferences, then checks the folder in the background. The source files are read-only, and each folder keeps its own saved playback position, queue, favorites, and playlists.
+Use **Music Folder** in the preview’s left column to add a music folder. DeckDS opens the combined catalog from `library.sqlite` in its local preferences, then checks the configured folders in the background. Source files are read-only. The combined library keeps its saved playback position, queue, history, favorites, and playlists across restarts.
 
 Under **Deck Settings → Music Library**, **Quick Scan** and **Full Scan** read tags for new files and reuse indexed metadata when both file size and modification time match. The preview’s **Rescan** button runs a quick scan. If a scan finds missing files, **Keep** leaves them in the index and marks them in Get Info. **Remove** drops the missing entries from the index.
 The **Sync** control is reserved for a later update.
@@ -63,9 +63,15 @@ Web Config starts with DeckDS and listens on all IPv4 interfaces at port 8080. O
 
 The browser shows the active library, scan progress, and Now Playing. The Now Playing controls operate the DeckDS player, including previous and next track, play and pause, seeking, volume, and mute. Scans and missing-file decisions share the same state with the SDL3 app. Theme, accent color, brightness, clock format, SFX, SFX volume, SFX output, and lid behavior apply live and use the preview’s existing settings file.
 
-Use **Music Library → Sync Config** to save the library sync server URL. Saving the field empty clears the URL.
+Set each library’s **Sync URL** when adding or editing the library. Saving an empty field in **Edit** clears that library’s URL.
 
-**Connectivity** scans for visible open and WPA Personal Wi-Fi networks and joins them through NetworkManager on Linux or CoreWLAN on macOS. Linux requires GIO at build time and a NetworkManager-managed adapter at runtime. **Bluetooth Audio** discovers, pairs, connects, and forgets devices through the same BlueZ controller as the Deck on Linux. The macOS preview uses demo Bluetooth devices.
+**Library** lists music folders and their current ID namespaces. Use **Add** to add a folder and **Edit** to update its settings. Fill in **Relocate to** in **Edit** to preview matches by full relative path and review unmatched files before moving. Confirm **ReKey** to back up the index and playback settings, recalculate Tracks-compatible song, album, and artist IDs, and update namespaces from the current identifiers.
+
+Use **Disable** in **Edit** to take a library out of browsing, scanning, and playback. **Delete** is available for disabled libraries. After confirmation, DeckDS backs up the index and playback settings, then removes the library’s indexed tracks and their playlist references. Audio files stay on disk.
+
+See [Library namespaces, UUIDs, and ReKey](docs/library-identity.md) for the ID formulas, database writes, and upgrade behavior.
+
+**Connectivity** scans for visible open and WPA Personal Wi-Fi networks and joins them through NetworkManager on Linux or CoreWLAN on macOS. **Manual** joins a network by SSID and password. Linux requires GIO at build time and a NetworkManager-managed adapter at runtime. **Bluetooth Audio** discovers, pairs, connects, and forgets devices through the same BlueZ controller as the Deck on Linux. The macOS preview uses demo Bluetooth devices.
 
 Under **Deck Settings → Updates**, use **Edit URL** to save or clear the device’s OTA URL. **Update** is disabled pending hardware support.
 

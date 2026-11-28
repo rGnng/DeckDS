@@ -67,7 +67,8 @@ constexpr unsigned short port = 8080;
 constexpr size_t requestLimit = 256;
 constexpr size_t commandLimit = 24;
 constexpr std::string_view otaUrlPath = "/api/ota/url";
-constexpr std::string_view syncUrlPath = "/api/library/sync-url";
+constexpr std::string_view libraryPath = "/api/library/manage/";
+constexpr size_t libraryRequestLimit = 8192;
 constexpr std::string_view passwordPath = "/api/access/password";
 constexpr std::string_view loginPath = "/api/access/login";
 constexpr auto sessionCookie = "deckds_session";
@@ -148,14 +149,14 @@ std::string json(const WebConfigState& state)
     }
     const auto& playback = state.playback;
     output << "},\"playback\":{\"trackId\":" << jsonString(playback.trackId)
+           << ",\"libraryId\":" << jsonString(playback.libraryId) << ",\"albumId\":" << jsonString(playback.albumId)
+           << ",\"artistId\":" << jsonString(playback.artistId) << ",\"albumArtistId\":" << jsonString(playback.albumArtistId)
            << ",\"positionMs\":" << playback.positionMs << ",\"durationMs\":" << playback.durationMs
            << ",\"volume\":" << playback.volume << ",\"queued\":" << playback.queued << ",\"available\":" << playback.available
            << ",\"playing\":" << playback.playing << ",\"muted\":" << playback.muted
            << ",\"canPlay\":" << playback.canPlay << ",\"canPrevious\":" << playback.canPrevious
            << ",\"canNext\":" << playback.canNext << "},\"ota\":";
     writeUrl(output, state.ota);
-    output << ",\"sync\":";
-    writeUrl(output, state.sync);
     writeConnectivity(output, state);
     output << '}';
     return std::move(output).str();
@@ -207,6 +208,30 @@ void writeConnectivity(std::ostream& output, const WebConfigState& state)
         output << "{\"id\":" << jsonString(device.id) << ",\"name\":" << jsonString(device.name)
                << ",\"paired\":" << device.paired << ",\"connected\":" << device.connected << '}';
     });
+    output << "},\"libraryConfig\":{";
+    const auto& library = state.libraryConfig;
+    output << "\"supported\":" << library.supported << ",\"busy\":" << library.busy
+           << ",\"revision\":" << library.revision << ",\"message\":" << jsonString(library.message)
+           << ",\"error\":" << jsonString(library.error) << ",\"backup\":" << jsonString(library.backup)
+           << ",\"folders\":";
+    writeArray(output, library.folders, [&](const auto& folder) {
+        output << "{\"id\":" << jsonString(folder.id) << ",\"root\":" << jsonString(folder.root)
+               << ",\"identifier\":" << jsonString(folder.identifier) << ",\"namespace\":" << jsonString(folder.idNamespace)
+               << ",\"syncUrl\":" << jsonString(folder.syncUrl) << ",\"enabled\":" << folder.enabled << '}';
+    });
+    output << ",\"preview\":";
+    if (library.preview) {
+        const auto& preview = *library.preview;
+        output << "{\"kind\":\"relocate\",\"destination\":" << jsonString(preview.destination)
+               << ",\"token\":" << preview.token << ",\"matched\":" << preview.matched
+               << ",\"missing\":" << preview.missing << ",\"unmatched\":";
+        writeArray(output, preview.unmatched, [&](const auto& path) { output << jsonString(path); });
+        output << '}';
+    } else {
+        output << "null";
+    }
+    if (library.rekey)
+        output << ",\"rekey\":{\"checked\":" << library.rekey->checked << ",\"total\":" << library.rekey->total << '}';
     output << '}';
 }
 
@@ -349,13 +374,16 @@ struct WebConfig::Server {
     MHD_Daemon* daemon = nullptr;
     std::string machineHost, failure;
     std::mutex mutex;
-    std::string state = json({});
+    std::string state;
     std::string debugState;
+    std::string libraryReport;
+    uint64_t libraryReportToken = 0;
     std::vector<WebConfigCommand> commands;
     std::string playbackTrackId;
     bool canScan = false;
     uint64_t activeReview = 0;
     WebPassword password;
+    bool librarySupported = false, libraryBusy = false;
     bool wifiSupported = false, wifiBusy = false, bluetoothSupported = false, bluetoothBusy = false, bluetoothScanning = false;
     std::vector<WifiNetwork> wifiNetworks;
     std::vector<WebConfigState::Bluetooth::Device> bluetoothDevices;
@@ -398,7 +426,8 @@ struct WebConfig::Server {
             return errorResponse(connection, 503, wifi ? "Wi-Fi setup is unavailable." : "Bluetooth setup is unavailable.");
         const bool queued = std::ranges::any_of(commands, [wifi](const auto& command) {
             if (wifi)
-                return command.type == Type::WifiScan || command.type == Type::WifiConnect;
+                return command.type == Type::WifiScan || command.type == Type::WifiConnect ||
+                       command.type == Type::WifiConnectManual;
             return command.type == Type::BluetoothRefreshPaired || command.type == Type::BluetoothScan || command.type == Type::BluetoothConnect ||
                    command.type == Type::BluetoothForget;
         });
@@ -409,10 +438,21 @@ struct WebConfig::Server {
             commands.push_back({wifi ? Type::WifiScan : Type::BluetoothScan});
         } else if (!wifi && action == "paired" && body.empty()) {
             commands.push_back({Type::BluetoothRefreshPaired});
-        } else if (wifi && action == "connect") {
+        } else if (wifi && (action == "connect" || action == "manual")) {
             const auto separator = body.find('\n');
             if (separator == std::string_view::npos || !passwordText(body.substr(separator + 1)))
                 return errorResponse(connection, 400, "Invalid Wi-Fi connection request.");
+            if (action == "manual") {
+                const auto ssid = body.substr(0, separator);
+                if (ssid.empty() || ssid.size() > 32 || !passwordText(ssid))
+                    return errorResponse(connection, 400, "Enter a network name of up to 32 bytes.");
+                WebConfigCommand command{Type::WifiConnectManual};
+                command.target = ssid;
+                command.wifiPassword = body.substr(separator + 1);
+                commands.push_back(std::move(command));
+                wifiBusy = true;
+                return respond(connection, 202, "application/json", "{}");
+            }
             const auto network = std::ranges::find(wifiNetworks, body.substr(0, separator), &WifiNetwork::id);
             if (network == wifiNetworks.end() || network->connected)
                 return errorResponse(connection, 409, "This network is no longer available to join. Scan again.");
@@ -437,6 +477,74 @@ struct WebConfig::Server {
         return respond(connection, 202, "application/json", "{}");
     }
 
+    MHD_Result libraryCommand(MHD_Connection* connection, std::string_view action, std::string_view body)
+    {
+        using Type = WebConfigCommand::Type;
+        if (!librarySupported)
+            return errorResponse(connection, 503, "Library configuration is unavailable.");
+        if (libraryBusy || std::ranges::any_of(commands, [](const auto& command) {
+                return command.type == Type::LibraryAdd || command.type == Type::LibraryRename || command.type == Type::LibrarySyncUrl ||
+                       command.type == Type::LibrarySetEnabled || command.type == Type::LibraryDelete ||
+                       command.type == Type::LibraryRekey || command.type == Type::LibraryPreviewRelocate ||
+                       command.type == Type::LibraryApply;
+            }))
+            return errorResponse(connection, 409, "Wait for the current library operation to finish.");
+
+        WebConfigCommand command{Type::LibraryRekey};
+        if (action == "rekey" && body.empty()) {
+            // ReKey applies to all configured libraries.
+        } else if (action == "apply") {
+            const auto token = number<uint64_t>(body);
+            if (!token || *token == 0)
+                return errorResponse(connection, 400, "Open a library preview first.");
+            command.type = Type::LibraryApply;
+            command.review = *token;
+        } else if (action == "enable" || action == "disable" || action == "delete") {
+            if (body.empty() || std::ranges::any_of(body, [](unsigned char ch) { return ch <= 32 || ch == 127; }))
+                return errorResponse(connection, 400, "Choose a library.");
+            command.type = action == "delete" ? Type::LibraryDelete : Type::LibrarySetEnabled;
+            command.target = body;
+            command.value = action == "enable";
+        } else if (action == "add" || action == "rename" || action == "relocate-preview" || action == "sync-url") {
+            const auto divider = body.find('\n');
+            if (divider == 0 || divider == std::string_view::npos)
+                return errorResponse(connection, 400, "Enter a valid folder or library identifier.");
+            auto value = body.substr(divider + 1);
+            const auto control = [](unsigned char ch) { return ch < 32 || ch == 127; };
+            const auto settingsDivider = value.find('\n');
+            if (action != "sync-url" && settingsDivider != std::string_view::npos) {
+                auto url = value.substr(settingsDivider + 1);
+                value = value.substr(0, settingsDivider);
+                auto identifier = value;
+                if (action == "relocate-preview") {
+                    const auto urlDivider = url.find('\n');
+                    if (urlDivider == std::string_view::npos)
+                        return errorResponse(connection, 400, "Enter a valid folder or library identifier.");
+                    identifier = url.substr(0, urlDivider);
+                    url.remove_prefix(urlDivider + 1);
+                }
+                if (!validLibrarySyncUrl(url))
+                    return errorResponse(connection, 400, "Enter a URL with a server address.");
+                if (std::ranges::any_of(identifier, control))
+                    return errorResponse(connection, 400, "Enter a valid folder or library identifier.");
+                command.librarySettings = MusicLibrarySettings{std::string(identifier), std::string(url)};
+            }
+            if (std::ranges::any_of(value, control) || std::ranges::any_of(body.substr(0, divider), control))
+                return errorResponse(connection, 400, "Enter a valid folder or library identifier.");
+            command.type = action == "add" ? Type::LibraryAdd : action == "rename" ? Type::LibraryRename :
+                           action == "sync-url" ? Type::LibrarySyncUrl : Type::LibraryPreviewRelocate;
+            command.target = body.substr(0, divider);
+            command.url = value;
+            if (command.type == Type::LibrarySyncUrl && !validLibrarySyncUrl(command.url))
+                return errorResponse(connection, 400, "Enter a URL with a server address.");
+        } else {
+            return errorResponse(connection, 404, "Library action not found.");
+        }
+        commands.push_back(std::move(command));
+        libraryBusy = true;
+        return respond(connection, 202, "application/json", "{}");
+    }
+
     static void complete(void*, MHD_Connection*, void** request, MHD_RequestTerminationCode)
     {
         delete static_cast<Request*>(*request);
@@ -453,7 +561,9 @@ struct WebConfig::Server {
         auto& context = *static_cast<Request*>(*request);
         try {
             if (*size) {
-                const auto limit = url == otaUrlPath || url == syncUrlPath ? webUrlLimit : requestLimit;
+                const std::string_view path(url);
+                const auto limit = path.starts_with(libraryPath) ? libraryRequestLimit :
+                                   path == otaUrlPath ? webUrlLimit : requestLimit;
                 context.tooLarge = context.tooLarge || *size > limit - context.body.size();
                 if (!context.tooLarge)
                     context.body.append(data, *size);
@@ -524,6 +634,13 @@ struct WebConfig::Server {
         if (method == "GET") {
             if (path == "/api/state")
                 return respond(connection, 200, "application/json", state);
+            if (path == "/api/library/unmatched") {
+                const char* requested = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "preview");
+                const auto token = requested ? number<uint64_t>(requested) : std::nullopt;
+                if (!token || *token != libraryReportToken || libraryReport.empty())
+                    return errorResponse(connection, 404, "No unmatched music files to review.");
+                return respond(connection, 200, "text/plain; charset=utf-8", libraryReport);
+            }
             if (path == "/api/debug") {
                 if (debugState.empty())
                     return errorResponse(connection, 503, "Waiting for the first debug snapshot.");
@@ -554,13 +671,14 @@ struct WebConfig::Server {
                 return errorResponse(connection, 409, "That scan has already been reviewed.");
             commands.push_back({choice == "keep" ? Type::KeepMissing : Type::RemoveMissing, *review});
             activeReview = 0;
-        } else if (path == otaUrlPath || path == syncUrlPath) {
-            const bool ota = path == otaUrlPath;
-            if (ota ? !validOtaUrl(body) : !validLibrarySyncUrl(body))
-                return errorResponse(connection, 400, ota ? "Enter a valid HTTP or HTTPS URL." : "Enter a URL with a server address.");
-            WebConfigCommand command{ota ? Type::OtaUrl : Type::SyncUrl};
+        } else if (path == otaUrlPath) {
+            if (!validOtaUrl(body))
+                return errorResponse(connection, 400, "Enter a valid HTTP or HTTPS URL.");
+            WebConfigCommand command{Type::OtaUrl};
             command.url = body;
             commands.push_back(std::move(command));
+        } else if (path.starts_with(libraryPath)) {
+            return libraryCommand(connection, path.substr(libraryPath.size()), body);
         } else if (path.starts_with("/api/wifi/") || path.starts_with("/api/bluetooth/")) {
             return networkCommand(connection, path, body);
         } else if (path.starts_with("/api/settings/")) {
@@ -625,7 +743,7 @@ bool WebConfig::supported() { return true; }
 bool WebConfig::running() const { return server->daemon != nullptr; }
 std::string WebConfig::error() const { return server->failure; }
 
-bool WebConfig::start(const std::filesystem::path& preferences)
+bool WebConfig::start(const std::filesystem::path& preferences, const WebConfigState& initial)
 {
     stop();
     if (!server->password.load(preferences)) {
@@ -643,6 +761,7 @@ bool WebConfig::start(const std::filesystem::path& preferences)
     bindAddress.sin_family = AF_INET;
     bindAddress.sin_port = htons(port);
     bindAddress.sin_addr.s_addr = htonl(INADDR_ANY);
+    publish(initial);
     server->daemon = MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD, port, nullptr, nullptr, Server::access, server.get(),
         MHD_OPTION_SOCK_ADDR, reinterpret_cast<const sockaddr*>(&bindAddress),
         MHD_OPTION_CONNECTION_LIMIT, 16u, MHD_OPTION_PER_IP_CONNECTION_LIMIT, 8u,
@@ -670,8 +789,11 @@ void WebConfig::stop()
     server->bluetoothSupported = server->bluetoothBusy = server->bluetoothScanning = false;
     server->wifiNetworks.clear();
     server->bluetoothDevices.clear();
-    server->state = json({});
+    server->state.clear();
     server->debugState.clear();
+    server->libraryReport.clear();
+    server->libraryReportToken = 0;
+    server->librarySupported = server->libraryBusy = false;
 }
 
 void WebConfig::publish(const WebConfigState& state)
@@ -682,6 +804,8 @@ void WebConfig::publish(const WebConfigState& state)
     server->playbackTrackId = state.playback.trackId;
     server->canScan = state.canScan;
     server->activeReview = state.removing || state.missing == 0 ? 0 : state.review;
+    server->librarySupported = state.libraryConfig.supported;
+    server->libraryBusy = state.libraryConfig.busy;
     server->wifiSupported = state.wifi.supported;
     server->wifiBusy = state.wifi.busy;
     server->wifiNetworks = state.wifi.networks;
@@ -698,6 +822,13 @@ void WebConfig::publishDebug(const WebDebugState& state)
     server->debugState = std::move(encoded);
 }
 
+void WebConfig::publishLibraryReport(uint64_t token, std::string report)
+{
+    const std::lock_guard lock(server->mutex);
+    server->libraryReportToken = token;
+    server->libraryReport = std::move(report);
+}
+
 std::vector<WebConfigCommand> WebConfig::takeCommands()
 {
     const std::lock_guard lock(server->mutex);
@@ -709,10 +840,11 @@ WebConfig::WebConfig() = default;
 WebConfig::~WebConfig() = default;
 bool WebConfig::supported() { return false; }
 bool WebConfig::running() const { return false; }
-bool WebConfig::start(const std::filesystem::path&) { return false; }
+bool WebConfig::start(const std::filesystem::path&, const WebConfigState&) { return false; }
 void WebConfig::stop() {}
 std::string WebConfig::error() const { return {}; }
 void WebConfig::publish(const WebConfigState&) {}
 void WebConfig::publishDebug(const WebDebugState&) {}
+void WebConfig::publishLibraryReport(uint64_t, std::string) {}
 std::vector<WebConfigCommand> WebConfig::takeCommands() { return {}; }
 #endif

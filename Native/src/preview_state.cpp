@@ -18,7 +18,7 @@ void readRange(std::istream& input, T& field, int min, int max)
 }
 }
 
-bool DeckUi::loadPreview(std::istream& settings)
+bool DeckUi::loadPreview(std::istream& settings, const MusicIdAliases& aliases)
 {
     std::string key;
     if (!std::getline(settings, key) || key != previewVersion)
@@ -28,10 +28,15 @@ bool DeckUi::loadPreview(std::istream& settings)
     trackIndices.reserve(player.tracks.size());
     for (size_t i = 0; i < player.tracks.size(); ++i)
         trackIndices.emplace(player.tracks[i].id, static_cast<int>(i));
-    const auto readTrackList = [&](std::istream& input) {
+    for (const auto& [oldId, currentId] : aliases) {
+        if (const auto found = trackIndices.find(currentId); found != trackIndices.end())
+            trackIndices.try_emplace(oldId, found->second);
+    }
+    const auto readTrackList = [&](std::istream& input, bool activeOnly = false) {
         std::vector<int> indices;
         for (std::string id; input >> std::quoted(id);) {
-            if (const auto found = trackIndices.find(id); found != trackIndices.end())
+            if (const auto found = trackIndices.find(id); found != trackIndices.end() &&
+                (!activeOnly || player.canPlayTrack(found->second)))
                 indices.push_back(found->second);
         }
         return indices;
@@ -93,18 +98,18 @@ bool DeckUi::loadPreview(std::istream& settings)
                 if (id.empty()) {
                     player.current = -1;
                     player.seconds = 0;
-                } else if (const auto found = trackIndices.find(id); found != trackIndices.end()) {
+                } else if (const auto found = trackIndices.find(id); found != trackIndices.end() && player.canPlayTrack(found->second)) {
                     player.current = found->second;
                     player.seconds = std::clamp(seconds, 0, std::max(0, player.track()->duration - 1));
                     readRange(input, player.currentStarted, 0, 1);
                 }
             }
         } else if (key == "queue") {
-            player.queue = readTrackList(input);
+            player.queue = readTrackList(input, true);
         } else if (key == "history") {
-            player.history = readTrackList(input);
+            player.history = readTrackList(input, true);
         } else if (key == "played") {
-            player.played = readTrackList(input);
+            player.played = readTrackList(input, true);
         } else if (key == "stars") {
             std::fill(player.stars.begin(), player.stars.end(), false);
             for (int index : readTrackList(input))

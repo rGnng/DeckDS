@@ -10,6 +10,7 @@ struct WifiNetwork {
     int strength = 0;
     bool connected = false;
     std::string ssidBytes{};
+    bool manual = false;
 };
 
 struct WifiResult {

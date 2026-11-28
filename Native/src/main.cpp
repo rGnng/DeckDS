@@ -340,16 +340,25 @@ public:
             return;
         const bool scan = command.type == WebConfigCommand::Type::WifiScan;
         if (!scan) {
-            const auto selected = std::ranges::find(status.networks, command.target, &WifiNetwork::id);
-            if (selected == status.networks.end() || selected->connected) {
-                status.message = "This network is no longer available to join. Scan again.";
-                status.error = true;
-                return;
+            WifiNetwork network;
+            if (command.type == WebConfigCommand::Type::WifiConnectManual) {
+                network.name = command.target;
+                network.ssidBytes = std::move(command.target);
+                network.security = command.wifiPassword.empty() ? WifiNetwork::Security::Open : WifiNetwork::Security::Personal;
+                network.manual = true;
+            } else {
+                const auto selected = std::ranges::find(status.networks, command.target, &WifiNetwork::id);
+                if (selected == status.networks.end() || selected->connected) {
+                    status.message = "This network is no longer available to join. Scan again.";
+                    status.error = true;
+                    return;
+                }
+                network = *selected;
             }
-            connecting = selected->id;
-            status.message = "Connecting to " + selected->name + "…";
+            connecting = network;
+            status.message = network.manual ? "Connecting to Wi-Fi…" : "Connecting to " + network.name + "…";
             task = std::async(std::launch::async,
-                [network = *selected, password = std::move(command.wifiPassword)] { return connectWifi(network, password); });
+                [network = std::move(network), password = std::move(command.wifiPassword)] { return connectWifi(network, password); });
         } else {
             status.message = "Scanning for Wi-Fi networks…";
             task = std::async(std::launch::async, scanWifi);
@@ -376,17 +385,17 @@ public:
         if (!task.valid() || task.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
             return;
         auto result = task.get();
-        if (connecting.empty()) {
+        if (!connecting) {
             status.networks = std::move(result.networks);
         } else if (!result.error) {
             status.connected = true;
             for (auto& network : status.networks) {
-                network.connected = network.id == connecting;
-                if (network.connected)
-                    status.accessPoint = WifiConnection{network.name, network.id, network.strength};
+                network.connected = network.id == connecting->id;
             }
+            status.accessPoint = WifiConnection{connecting->name, connecting->id,
+                connecting->manual ? std::nullopt : std::optional(connecting->strength)};
         }
-        connecting.clear();
+        connecting.reset();
         status.message = std::move(result.message);
         status.error = result.error;
         status.busy = false;
@@ -397,7 +406,7 @@ public:
 private:
     WebConfigState::Wifi status{.message = wifiSetupSupported() ? "" : "Wi-Fi setup is unavailable.",
                                 .supported = wifiSetupSupported()};
-    std::string connecting;
+    std::optional<WifiNetwork> connecting;
     bool fallbackConnected = false;
     std::future<std::optional<WifiConnection>> linkTask;
     std::future<WifiResult> task;
@@ -471,6 +480,15 @@ void saveWebUrl(WebConfigState::UrlSetting& setting, const std::filesystem::path
         setting.error = error;
 }
 
+struct LibraryConfigResult {
+    std::vector<MusicFolder> folders;
+    std::optional<MusicRelocation> relocation{};
+    std::optional<MediaLibrary> catalog{};
+    MusicIdAliases aliases{};
+    std::string backup, message;
+    bool rescan = false, deleted = false;
+};
+
 int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::filesystem::path musicPath)
 {
     const char* base = SDL_GetBasePath();
@@ -489,26 +507,52 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
     const auto otaFile = preferences.empty() ? std::filesystem::path{} : preferences / "ota-url";
     const auto syncFile = preferences.empty() ? std::filesystem::path{} : preferences / "library-sync-url";
     auto ota = loadWebUrl(otaFile, validOtaUrl);
-    auto librarySync = loadWebUrl(syncFile, validLibrarySyncUrl);
-    const auto folderFile = preferences.empty() ? std::filesystem::path{} : preferences / "music-folder";
+    const auto previousSyncUrl = loadWebUrl(syncFile, validLibrarySyncUrl).url;
+    const auto previousFolderFile = preferences.empty() ? std::filesystem::path{} : preferences / "music-folder";
     const auto database = preferences.empty() ? std::filesystem::path{} : preferences / "library.sqlite";
-    const bool explicitMusicPath = !musicPath.empty();
-    if (!explicitMusicPath && !longMetadata && !bluetoothDemo && mediaSupported() && !folderFile.empty()) {
-        std::ifstream input(folderFile, std::ios::binary);
-        musicPath = std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    std::filesystem::path previousRoot;
+    if (!previousFolderFile.empty()) {
+        std::ifstream input(previousFolderFile, std::ios::binary);
+        previousRoot = std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
     }
     std::filesystem::path settingsPath;
+    MusicIdAliases aliases;
+    WebConfigState::LibraryConfig libraryConfig;
+    libraryConfig.supported = !longMetadata && !bluetoothDemo && mediaSupported() && !database.empty();
+    const auto setFolders = [&](std::vector<MusicFolder> folders) {
+        libraryConfig.folders = std::move(folders);
+        app.musicFolderSelected = !libraryConfig.folders.empty();
+        app.enabledMusicFolders = std::ranges::any_of(libraryConfig.folders, &MusicFolder::enabled);
+        musicPath = app.musicFolderSelected ? libraryConfig.folders.front().root : "";
+        if (app.musicFolderSelected)
+            settingsPath = preferences / "preview-libraries.conf";
+    };
+    const auto previewState = [&] {
+        std::ostringstream settings;
+        app.savePreview(settings);
+        return std::move(settings).str();
+    };
     const auto loadSettings = [&] {
         if (settingsPath.empty())
-            return;
+            return false;
         std::ifstream settings(settingsPath);
-        if (!app.loadPreview(settings) && !longMetadata && musicPath.empty())
+        if (!settings && !libraryConfig.folders.empty()) {
+            const auto& origin = libraryConfig.folders.front().originalRoot;
+            settings.open(preferences / ("preview-music-" + mediaKey(origin) + ".conf"));
+        }
+        const bool loaded = app.loadPreview(settings, aliases);
+        if (!loaded && !longMetadata && !app.musicFolderSelected)
             loadClockSettings(settingsPath.parent_path() / "clock.conf", app);
+        return loaded;
     };
-    MediaScanProgress scanProgress;
+    MediaScanProgress scanProgress, rekeyProgress;
     std::future<MediaLibrary> musicScan;
     std::future<std::vector<std::string>> missingCleanup;
-    std::vector<std::string> pendingMissingPaths;
+    std::future<LibraryConfigResult> libraryJob;
+    std::vector<MusicPath> pendingMissingPaths;
+    std::optional<MusicRelocation> relocationPreview;
+    bool rekeying = false;
+    uint64_t nextPreviewToken = 0;
     std::string libraryMessage;
     std::jthread scanThread;
     const auto startMusicJob = [&scanThread](auto work) {
@@ -519,71 +563,158 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
         return result;
     };
     bool libraryReady = true;
-    const auto startMusicScan = [&](std::filesystem::path path, bool remember, MusicScanMode mode = MusicScanMode::Quick) {
-        if (scanThread.joinable()) {
-            scanThread.request_stop();
-            scanThread.join();
-        }
-        const auto resolved = availableMusicPath(path);
-        const auto root = resolved.empty() ? std::move(path) : resolved;
-        const bool keepCurrent = libraryReady && app.player.hasMediaLibrary() && musicPath == root;
-        musicPath = root;
-        musicScan = {};
-        app.musicScan.reset();
-        app.musicFolderSelected = !musicPath.empty();
-        if (!keepCurrent) {
-            libraryReady = false;
-            settingsPath = preferences.empty() ? std::filesystem::path{}
-                : preferences / ("preview-music-" + mediaKey(musicPath.string()) + ".conf");
-            try {
-                if (auto cached = loadMusicIndex(musicPath, database); cached && !cached->files.empty()) {
-                    SDL_Log("Loaded %zu tracks from the music library index", cached->files.size());
-                    app.useMediaLibrary(std::move(*cached));
-                    libraryReady = true;
-                    loadSettings();
-                }
-            } catch (const std::exception& error) {
-                SDL_Log("Unable to read the music library index: %s", error.what());
-            }
-            if (!libraryReady)
-                app.useMediaLibrary({});
-        }
+    const auto clearLibraryPreview = [&] {
+        relocationPreview.reset();
+        libraryConfig.preview.reset();
+        web.publishLibraryReport(0, {});
+    };
+    const auto startMusicScan = [&](MusicScanMode mode = MusicScanMode::Quick) {
+        if (!app.enabledMusicFolders || musicScan.valid() || missingCleanup.valid() || libraryJob.valid())
+            return false;
+        clearLibraryPreview();
         app.mediaStatus.clear();
         libraryMessage.clear();
-        if (resolved.empty()) {
-            libraryMessage = "The music folder is unavailable.";
-            if (!libraryReady)
-                app.mediaStatus = "Music folder is unavailable";
-            return false;
-        }
-        if (remember && !folderFile.empty())
-            savePreviewSettings(folderFile, musicPath.string());
         app.musicScan = DeckUi::MusicScan{libraryReady, mode};
         scanProgress.checked.store(0, std::memory_order_relaxed);
         scanProgress.total.store(0, std::memory_order_relaxed);
-        musicScan = startMusicJob([&scanProgress, musicPath, database](std::stop_token stop) {
-            return scanMusic(musicPath, scanProgress, stop, database);
+        musicScan = startMusicJob([&scanProgress, database](std::stop_token stop) {
+            return scanMusic(scanProgress, stop, database);
         });
         return true;
     };
-    if (!musicPath.empty()) {
-        startMusicScan(musicPath, explicitMusicPath);
-    } else if (!bluetoothDemo && !preferences.empty()) {
+    if (libraryConfig.supported) {
+        try {
+            auto explicitRoot = musicPath;
+            const bool initializedNamespaces = initializeMusicIndex(database, previousRoot, previousSyncUrl);
+            if (!explicitRoot.empty())
+                addMusicFolder(database, explicitRoot, {}, previousSyncUrl);
+            setFolders(musicFolders(database));
+            if (app.musicFolderSelected) {
+                auto catalog = loadMusicIndex(database);
+                libraryReady = !catalog.files.empty();
+                app.useMediaLibrary(std::move(catalog));
+                aliases = musicIdAliases(database);
+                if (libraryReady && loadSettings() && initializedNamespaces && !savePreviewSettings(settingsPath, previewState()))
+                    libraryConfig.error = "Library namespaces initialized. DeckDS could not save the playback settings.";
+                startMusicScan();
+            }
+        } catch (const std::exception& error) {
+            libraryConfig.error = error.what();
+            libraryMessage = "Unable to open the music library.";
+            SDL_Log("Unable to open the music library: %s", error.what());
+        }
+    }
+    if (!app.musicFolderSelected && !bluetoothDemo && !preferences.empty()) {
         settingsPath = preferences / (longMetadata ? "preview-long-metadata.conf" : "preview.conf");
         loadSettings();
     }
     if (bluetoothDemo)
         app.useBluetoothFixture();
-    const auto previewState = [&] {
-        std::ostringstream settings;
-        app.savePreview(settings);
-        return std::move(settings).str();
-    };
     auto savedSettings = previewState();
     const auto saveChangedSettings = [&] {
         auto current = previewState();
         if (current != savedSettings && savePreviewSettings(settingsPath, current))
             savedSettings = std::move(current);
+    };
+    const auto canManageLibrary = [&] {
+        return libraryConfig.supported && !musicScan.valid() && !missingCleanup.valid() && !libraryJob.valid() &&
+               !app.musicRemovalPending();
+    };
+    const auto startLibraryCommand = [&](const WebConfigCommand& command) {
+        using Type = WebConfigCommand::Type;
+        libraryConfig.error.clear();
+        libraryConfig.message.clear();
+        libraryConfig.backup.clear();
+        const auto failure = [&](std::string message) {
+            libraryConfig.error = std::move(message);
+            ++libraryConfig.revision;
+        };
+        if (!canManageLibrary()) {
+            failure("Wait for the current library operation to finish.");
+            return;
+        }
+        const auto type = command.type;
+        const auto target = command.target;
+        const auto text = command.url;
+        if (type == Type::LibraryApply || type == Type::LibraryRekey || type == Type::LibraryDelete) {
+            const bool rekey = type == Type::LibraryRekey;
+            const bool deleting = type == Type::LibraryDelete;
+            if (type == Type::LibraryApply && (!relocationPreview || !libraryConfig.preview || libraryConfig.preview->token != command.review)) {
+                failure("Open a current library preview before applying changes.");
+                return;
+            }
+            if (deleting) {
+                const auto folder = std::ranges::find(libraryConfig.folders, target, &MusicFolder::id);
+                if (folder == libraryConfig.folders.end() || folder->enabled) {
+                    failure("Disable the library before deleting it.");
+                    return;
+                }
+            }
+            if (rekey && libraryConfig.folders.empty()) {
+                failure("Add a music folder first.");
+                return;
+            }
+            const auto backup = preferences / "Library Backups" /
+                (std::to_string(SDL_GetTicksNS()) + "-" + std::to_string(SDL_rand_bits()));
+            auto relocation = type == Type::LibraryApply ? std::move(relocationPreview) : std::nullopt;
+            clearLibraryPreview();
+            app.player.playing = false;
+            const auto snapshot = previewState();
+            if (rekey) {
+                rekeyProgress.checked.store(0, std::memory_order_relaxed);
+                rekeyProgress.total.store(0, std::memory_order_relaxed);
+            }
+            libraryJob = startMusicJob([database, backup, snapshot, relocation = std::move(relocation),
+                                        deleting, target, &rekeyProgress](std::stop_token stop) {
+                std::filesystem::create_directories(backup);
+                if (!savePreviewSettings(backup / "playback.conf", snapshot))
+                    throw std::runtime_error("DeckDS could not back up playback settings.");
+                if (relocation)
+                    relocateMusicLibrary(database, *relocation, backup / "library.sqlite", stop);
+                else if (deleting)
+                    deleteMusicFolder(database, target, backup / "library.sqlite", stop);
+                else
+                    rekeyMusicIndex(database, backup / "library.sqlite", rekeyProgress, stop);
+                LibraryConfigResult result;
+                result.folders = musicFolders(database);
+                result.catalog = loadMusicIndex(database);
+                result.aliases = musicIdAliases(database);
+                result.backup = backup.string();
+                result.rescan = relocation.has_value();
+                result.deleted = deleting;
+                result.message = result.rescan ? "Library relocated." : deleting ? "Library deleted." : "ReKey complete.";
+                return result;
+            });
+            rekeying = rekey;
+            return;
+        }
+        clearLibraryPreview();
+        libraryJob = startMusicJob([database, type, target, text, settings = command.librarySettings,
+                                    enabled = command.value != 0, &previousSyncUrl](std::stop_token stop) {
+            LibraryConfigResult result;
+            const auto syncUrl = settings ? std::optional<std::string_view>(settings->syncUrl) : std::nullopt;
+            if (type == Type::LibraryAdd) {
+                addMusicFolder(database, target, text, previousSyncUrl, syncUrl.value_or(std::string_view{}));
+                result.rescan = true;
+                result.message = "Music folder added.";
+            } else if (type == Type::LibraryRename) {
+                renameMusicFolder(database, target, text, syncUrl);
+                result.message = "Library settings saved.";
+            } else if (type == Type::LibrarySyncUrl) {
+                setMusicSyncUrl(database, target, text);
+                result.message = text.empty() ? "Sync URL cleared." : "Sync URL saved.";
+            } else if (type == Type::LibrarySetEnabled) {
+                setMusicFolderEnabled(database, target, enabled);
+                result.catalog = loadMusicIndex(database);
+                result.aliases = musicIdAliases(database);
+                result.rescan = enabled;
+                result.message = enabled ? "Library enabled." : "Library disabled.";
+            } else {
+                result.relocation = previewMusicRelocation(database, target, text, stop, settings);
+            }
+            result.folders = musicFolders(database);
+            return result;
+        });
     };
     std::vector<std::unique_ptr<Window>> windows;
     const SDL_DisplayID primary = SDL_GetPrimaryDisplay();
@@ -613,16 +744,49 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
             return 1;
         }
     auto* textWindow = windows.back()->window;
+    const auto picker = std::make_shared<FolderPicker>();
+    bool choosingMusicFolder = false;
+    const auto webState = [&] {
+        WebConfigState state;
+        state.folder = libraryConfig.folders.size() <= 1 ? musicPath.string()
+            : std::to_string(libraryConfig.folders.size()) + " music folders";
+        state.tracks = app.player.hasMediaLibrary() ? app.player.activeLibrarySize() : 0;
+        state.message = libraryMessage;
+        state.canScan = !choosingMusicFolder && !libraryJob.valid() && app.canScanMusic();
+        state.review = app.missingMusicReview();
+        state.missing = app.missingMusicFiles();
+        state.removing = app.removingMusicFiles();
+        state.settings = app.webSettings();
+        const auto accents = accentPresets(app.theme);
+        std::ranges::transform(accents, state.accents.begin(), &AccentPreset::name);
+        state.playback = app.webPlayback();
+        if (libraryJob.valid())
+            state.playback.available = false;
+        state.ota = ota;
+        state.wifi = webWifi.state();
+        state.bluetooth = app.webBluetooth();
+        state.libraryConfig = libraryConfig;
+        state.libraryConfig.busy = choosingMusicFolder || !canManageLibrary();
+        if (rekeying)
+            state.libraryConfig.rekey = WebConfigState::Scan{rekeyProgress.checked.load(std::memory_order_acquire),
+                                                           rekeyProgress.total.load(std::memory_order_relaxed), false};
+        if (const auto* track = app.player.track()) {
+            state.track = track->title;
+            state.artist = track->artist;
+        }
+        if (app.musicScan)
+            state.scan = WebConfigState::Scan{app.musicScan->checked, app.musicScan->total,
+                                            app.musicScan->mode == MusicScanMode::Full};
+        return state;
+    };
     if (WebConfig::supported()) {
-        if (web.start(preferences)) {
+        if (web.start(preferences, webState())) {
             app.refreshBluetoothDevices();
             SDL_Log("Web Config is listening on 0.0.0.0:8080");
         } else {
             SDL_Log("Web Config: %s", web.error().c_str());
         }
     }
-    const auto picker = std::make_shared<FolderPicker>();
-    bool choosingMusicFolder = false;
     if (kiosk)
         SDL_HideCursor();
 
@@ -799,7 +963,7 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                 switch (command.type) {
                 case Type::QuickScan:
                 case Type::FullScan:
-                    if (!app.musicRescanRequested && !choosingMusicFolder && app.canScanMusic()) {
+                    if (!app.musicRescanRequested && !choosingMusicFolder && !libraryJob.valid() && app.canScanMusic()) {
                         scanFromWeb = true;
                         app.musicRescanRequested = command.type == Type::QuickScan ? MusicScanMode::Quick : MusicScanMode::Full;
                     }
@@ -813,18 +977,16 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                     app.setWebSetting(command.setting, command.value, command.theme);
                     break;
                 case Type::Playback:
-                    app.applyWebPlayback(command.playback);
+                    if (!libraryJob.valid())
+                        app.applyWebPlayback(command.playback);
                     break;
                 case Type::OtaUrl:
                     saveWebUrl(ota, otaFile, command.url, "DeckDS could not save the OTA URL.");
                     nextWebPublish = 0;
                     break;
-                case Type::SyncUrl:
-                    saveWebUrl(librarySync, syncFile, command.url, "DeckDS could not save the library sync URL.");
-                    nextWebPublish = 0;
-                    break;
                 case Type::WifiScan:
                 case Type::WifiConnect:
+                case Type::WifiConnectManual:
                     webWifi.start(std::move(command));
                     nextWebPublish = 0;
                     break;
@@ -835,11 +997,27 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                     app.applyWebBluetooth(command.type, command.target);
                     nextWebPublish = 0;
                     break;
+                case Type::LibraryAdd:
+                case Type::LibraryRename:
+                case Type::LibrarySyncUrl:
+                case Type::LibrarySetEnabled:
+                case Type::LibraryDelete:
+                case Type::LibraryRekey:
+                case Type::LibraryPreviewRelocate:
+                case Type::LibraryApply:
+                    if (!choosingMusicFolder)
+                        startLibraryCommand(command);
+                    else {
+                        libraryConfig.error = "Close the folder picker first.";
+                        ++libraryConfig.revision;
+                    }
+                    nextWebPublish = 0;
+                    break;
                 }
             }
             webWifi.update();
         }
-        if (std::exchange(app.musicFolderRequested, false) && !choosingMusicFolder && !app.musicRemovalPending()) {
+        if (std::exchange(app.musicFolderRequested, false) && !choosingMusicFolder && canManageLibrary()) {
             choosingMusicFolder = true;
             const auto location = availableMusicPath(musicPath);
             const auto initialFolder = location.string();
@@ -859,8 +1037,9 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                     if (!selected.empty()) {
                         if (libraryReady && !settingsPath.empty())
                             saveChangedSettings();
-                        startMusicScan(std::move(selected), true);
-                        savedSettings = previewState();
+                        WebConfigCommand command{WebConfigCommand::Type::LibraryAdd};
+                        command.target = selected.string();
+                        startLibraryCommand(command);
                     } else {
                         choice->error = "The selected folder is unavailable.";
                     }
@@ -871,14 +1050,19 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
         }
         if (const auto mode = std::exchange(app.musicRescanRequested, std::nullopt);
             mode && !choosingMusicFolder && app.canScanMusic()) {
-            if (!startMusicScan(musicPath, false, *mode) && !scanFromWeb)
-                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Music Library", "The music folder is unavailable.", textWindow);
+            if (startMusicScan(*mode)) {
+                libraryConfig.error.clear();
+                libraryConfig.message.clear();
+                libraryConfig.backup.clear();
+            } else if (!scanFromWeb) {
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Music Library", "Another library operation is running.", textWindow);
+            }
         }
         if (const auto decision = std::exchange(app.musicMissingDecision, std::nullopt); decision) {
             auto paths = std::exchange(pendingMissingPaths, {});
             if (*decision) {
-                missingCleanup = startMusicJob([musicPath, database, paths = std::move(paths)](std::stop_token stop) {
-                    return removeMissingMusic(musicPath, paths, stop, database);
+                missingCleanup = startMusicJob([database, paths = std::move(paths)](std::stop_token stop) {
+                    return removeMissingMusic(paths, stop, database);
                 });
             } else {
                 libraryMessage = "Missing entries kept.";
@@ -898,10 +1082,60 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
             } catch (const std::exception& error) {
                 SDL_Log("Unable to remove missing files: %s", error.what());
                 libraryMessage = "Unable to remove missing entries.";
+                libraryConfig.error = libraryMessage;
                 if (!web.running())
                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Music Library", error.what(), textWindow);
             }
             app.dismissMissingFiles();
+        }
+        if (libraryJob.valid() && libraryJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            rekeying = false;
+            ++libraryConfig.revision;
+            nextWebPublish = 0;
+            try {
+                auto result = libraryJob.get();
+                const bool firstLibrary = !app.musicFolderSelected && !result.folders.empty();
+                setFolders(std::move(result.folders));
+                if (result.relocation) {
+                    relocationPreview = std::move(result.relocation);
+                    const auto& plan = *relocationPreview;
+                    WebConfigState::LibraryConfig::Preview preview;
+                    preview.destination = plan.destination;
+                    preview.token = ++nextPreviewToken;
+                    preview.matched = plan.matched;
+                    preview.missing = plan.missing.size();
+                    const auto listed = std::min<size_t>(plan.missing.size(), 100);
+                    preview.unmatched.assign(plan.missing.begin(), plan.missing.begin() + listed);
+                    std::string report;
+                    for (const auto& path : plan.missing)
+                        report += path + '\n';
+                    web.publishLibraryReport(preview.token, std::move(report));
+                    libraryConfig.preview = std::move(preview);
+                }
+                if (result.catalog) {
+                    const auto before = previewState();
+                    aliases = std::move(result.aliases);
+                    libraryReady = !result.catalog->files.empty();
+                    app.useMediaLibrary(std::move(*result.catalog));
+                    std::istringstream snapshot(before);
+                    app.loadPreview(snapshot, aliases);
+                    if ((libraryReady || result.deleted) && !savePreviewSettings(settingsPath, previewState()))
+                        libraryConfig.error = "Library updated. DeckDS could not save the playback settings.";
+                    else
+                        savedSettings = previewState();
+                } else if (firstLibrary) {
+                    libraryReady = false;
+                    app.useMediaLibrary({});
+                }
+                libraryConfig.message = std::move(result.message);
+                libraryConfig.backup = std::move(result.backup);
+                if (result.rescan)
+                    startMusicScan();
+            } catch (const std::exception& error) {
+                libraryConfig.error = error.what();
+                libraryMessage = "Library operation failed.";
+                SDL_Log("Library operation failed: %s", error.what());
+            }
         }
         if (musicScan.valid()) {
             if (!choosingMusicFolder && musicScan.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -911,7 +1145,11 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                     SDL_Log("Music library indexed %zu tracks (%zu probed, %zu cached, %zu skipped, %zu missing)",
                             library.files.size(), library.probed, library.reused, library.skipped, library.missing);
                     auto missing = std::move(library.missingPaths);
-                    libraryMessage = library.files.empty() ? "No playable music files found." : "Scan complete.";
+                    if (library.unavailable)
+                        libraryMessage = std::to_string(library.unavailable) +
+                            (library.unavailable == 1 ? " music folder unavailable." : " music folders unavailable.");
+                    else
+                        libraryMessage = library.files.empty() ? "No playable music files found." : "";
                     if (libraryReady) {
                         app.player.refreshMediaLibrary(std::move(library));
                     } else if (library.files.empty()) {
@@ -931,6 +1169,7 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                 } catch (const std::exception& error) {
                     SDL_Log("Music library scan failed: %s", error.what());
                     libraryMessage = "Unable to scan the music folder.";
+                    libraryConfig.error = libraryMessage;
                     if (!libraryReady)
                         app.mediaStatus = "Unable to scan the music folder";
                 }
@@ -945,30 +1184,7 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
             nextSettingsSave = now + saveInterval;
         }
         if (web.running() && now >= nextWebPublish) {
-            WebConfigState state;
-            state.folder = musicPath.string();
-            state.tracks = app.player.hasMediaLibrary() ? app.player.librarySize() : 0;
-            state.message = libraryMessage;
-            state.canScan = !choosingMusicFolder && app.canScanMusic();
-            state.review = app.missingMusicReview();
-            state.missing = app.missingMusicFiles();
-            state.removing = app.removingMusicFiles();
-            state.settings = app.webSettings();
-            const auto accents = accentPresets(app.theme);
-            std::ranges::transform(accents, state.accents.begin(), &AccentPreset::name);
-            state.playback = app.webPlayback();
-            state.ota = ota;
-            state.sync = librarySync;
-            state.wifi = webWifi.state();
-            state.bluetooth = app.webBluetooth();
-            if (const auto* track = app.player.track()) {
-                state.track = track->title;
-                state.artist = track->artist;
-            }
-            if (app.musicScan)
-                state.scan = WebConfigState::Scan{app.musicScan->checked, app.musicScan->total,
-                                                app.musicScan->mode == MusicScanMode::Full};
-            web.publish(state);
+            web.publish(webState());
             nextWebPublish = now + 150'000'000ULL;
         }
         if (web.running() && now >= nextDebugPublish) {
@@ -1016,7 +1232,7 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                 state.gamepads.push_back(textOrEmpty(SDL_GetGamepadName(pad)));
             }
             state.lastControllerEvent = lastControllerEvent;
-            state.tracks = app.player.hasMediaLibrary() ? app.player.librarySize() : 0;
+            state.tracks = app.player.hasMediaLibrary() ? app.player.activeLibrarySize() : 0;
             state.queue = app.player.queue.size();
             state.missing = app.missingMusicFiles();
             state.libraryStatus = libraryMessage;

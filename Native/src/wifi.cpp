@@ -235,13 +235,23 @@ WifiResult connectWifi(const WifiNetwork& network, const std::string& password)
     const auto device = bus ? wifiDevice(bus.get()) : std::string{};
     if (device.empty())
         return wifiError("No active Wi-Fi adapter managed by NetworkManager.");
-    const auto fields = accessPointFields(bus.get(), network.id.c_str());
-    if (!fields)
-        return wifiError("This network is no longer visible. Scan again.");
-    const Variant ssid(g_variant_lookup_value(fields.get(), "Ssid", G_VARIANT_TYPE("ay")), g_variant_unref);
-    const auto security = securityOf(fields.get());
-    if (!ssid || ssidBytes(ssid.get()) != network.ssidBytes || security != network.security)
-        return wifiError("The network changed. Scan again.");
+    Variant ssid(nullptr, g_variant_unref);
+    auto security = network.security;
+    if (network.manual) {
+        if (network.ssidBytes.empty() || network.ssidBytes.size() > 32 ||
+            !g_utf8_validate(network.ssidBytes.data(), network.ssidBytes.size(), nullptr))
+            return wifiError("Enter a valid network name of up to 32 bytes.");
+        ssid.reset(g_variant_ref_sink(g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE,
+                   network.ssidBytes.data(), network.ssidBytes.size(), 1)));
+    } else {
+        const auto fields = accessPointFields(bus.get(), network.id.c_str());
+        if (!fields)
+            return wifiError("This network is no longer visible. Scan again.");
+        ssid.reset(g_variant_lookup_value(fields.get(), "Ssid", G_VARIANT_TYPE("ay")));
+        security = securityOf(fields.get());
+        if (!ssid || ssidBytes(ssid.get()) != network.ssidBytes || security != network.security)
+            return wifiError("The network changed. Scan again.");
+    }
 
     using Security = WifiNetwork::Security;
     if (security == Security::Other)
@@ -259,6 +269,8 @@ WifiResult connectWifi(const WifiNetwork& network, const std::string& password)
     g_variant_builder_init(&settings, G_VARIANT_TYPE("a{sa{sv}}"));
     g_variant_builder_init(&wifi, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&wifi, "{sv}", "ssid", ssid.get());
+    if (network.manual)
+        g_variant_builder_add(&wifi, "{sv}", "hidden", g_variant_new_boolean(true));
     g_variant_builder_add(&settings, "{sa{sv}}", "802-11-wireless", &wifi);
     if (security != Security::Open) {
         GVariantBuilder credentials;
@@ -269,7 +281,8 @@ WifiResult connectWifi(const WifiNetwork& network, const std::string& password)
         g_variant_builder_add(&settings, "{sa{sv}}", "802-11-wireless-security", &credentials);
     }
     const auto reply = call(bus.get(), managerPath, manager, "AddAndActivateConnection", "(oo)",
-                            g_variant_new("(a{sa{sv}}oo)", &settings, device.c_str(), network.id.c_str()), 5000);
+                            g_variant_new("(a{sa{sv}}oo)", &settings, device.c_str(),
+                                          network.manual ? "/" : network.id.c_str()), 5000);
     if (!reply)
         return wifiError("NetworkManager could not start the connection. Check the password and network permissions.");
     const char* profile = nullptr;

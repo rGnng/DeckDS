@@ -157,7 +157,7 @@ void Studio::render(Draw& d, DeckUi& ui, SDL_Window* window, SDL_Texture* upper,
     controlY += 48;
     if (ui.player.hasMediaLibrary()) {
         if (ui.mediaStatus.empty() && (!ui.musicScan || ui.musicScan->inBackground)) {
-            const std::string tracks = std::to_string(ui.player.librarySize()) + " Tracks";
+            const std::string tracks = std::to_string(ui.player.activeLibrarySize()) + " Tracks";
             d.label(tracks, {left.x, controlY, left.w, 36}, Size::Desktop, p.dim, Face::Display, Align::Center, true);
         }
     } else {

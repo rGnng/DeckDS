@@ -144,13 +144,16 @@ void Player::rebuildMediaTracks()
 {
     tracks.clear();
     tracks.reserve(mediaFiles.size());
+    disabledTrackCount = 0;
     for (auto& file : mediaFiles) {
+        disabledTrackCount += file.disabled;
         file.visualKey = mediaKey("visual-v1|" + file.path + "|" + std::to_string(file.modificationStamp) +
                                   "|" + std::to_string(file.bytes));
         tracks.push_back({file.id, file.title, file.artist, file.album, file.format, file.rate, file.bitrate,
                           file.added, {}, file.disc, file.number, file.year, file.duration, {}, 0.f, 0, 0, false,
                           file.path, file.albumArtist, file.modified, file.visualKey, file.bytes, file.channels, file.bitDepth,
-                          file.lossless, file.missing});
+                          file.lossless, file.missing, file.libraryId, file.albumId, file.artistId, file.albumArtistId,
+                          file.disabled});
     }
 }
 
@@ -166,6 +169,11 @@ float Player::progress() const
 int Player::librarySize() const
 {
     return largeLibrary || mediaLibraryActive ? static_cast<int>(tracks.size()) : defaultLibrarySize;
+}
+
+bool Player::canPlayTrack(int index) const
+{
+    return index >= 0 && index < static_cast<int>(tracks.size()) && !tracks[index].disabled;
 }
 
 std::optional<int> Player::update(double dt)
@@ -252,8 +260,13 @@ std::optional<int> Player::playToggle()
 
 void Player::playFrom(std::vector<int> order, int index)
 {
-    if (index < 0 || index >= static_cast<int>(order.size()))
+    if (index < 0 || index >= static_cast<int>(order.size()) || !canPlayTrack(order[index]))
         return;
+    if (disabledTrackCount) {
+        const auto disabled = [&](int track) { return !canPlayTrack(track); };
+        index -= static_cast<int>(std::count_if(order.begin(), order.begin() + index, disabled));
+        std::erase_if(order, disabled);
+    }
     played.clear();
     history.assign(order.begin(), order.begin() + index);
     queue.assign(order.begin() + index + 1, order.end());
@@ -264,7 +277,7 @@ void Player::playFrom(std::vector<int> order, int index)
 
 void Player::playNow(int trackIndex)
 {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(tracks.size()))
+    if (!canPlayTrack(trackIndex))
         return;
     if (track())
         history.push_back(current);
@@ -277,6 +290,8 @@ void Player::playQueued(int index)
     if (index < 0 || index >= static_cast<int>(queue.size()))
         return;
     const int trackIndex = queue[index];
+    if (!canPlayTrack(trackIndex))
+        return;
     queue.erase(queue.begin() + index);
     playNow(trackIndex);
 }
@@ -323,7 +338,7 @@ void Player::previous()
 
 void Player::makeNext(int trackIndex)
 {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(tracks.size()) || trackIndex == current)
+    if (!canPlayTrack(trackIndex) || trackIndex == current)
         return;
     const auto queued = std::ranges::find(queue, trackIndex);
     if (queued == queue.end())
@@ -338,7 +353,7 @@ void Player::makeNext(int trackIndex)
 void Player::append(const std::vector<int>& ids)
 {
     for (const int index : ids)
-        if (index >= 0 && index < static_cast<int>(tracks.size()) && index != current &&
+        if (canPlayTrack(index) && index != current &&
             std::ranges::find(queue, index) == queue.end()) {
             queue.push_back(index);
             ++catalogRevision;
