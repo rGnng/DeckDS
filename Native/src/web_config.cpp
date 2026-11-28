@@ -61,6 +61,7 @@ bool validLibrarySyncUrl(std::string_view url)
 #include <utility>
 
 namespace {
+#include "build_commit.inc"
 #include "web_assets.inc"
 
 constexpr unsigned short port = 8080;
@@ -134,7 +135,8 @@ std::string json(const WebConfigState& state)
 {
     std::ostringstream output;
     output << std::boolalpha
-           << "{\"folder\":" << jsonString(state.folder)
+           << "{\"buildCommit\":" << jsonString(buildCommit)
+           << ",\"folder\":" << jsonString(state.folder)
            << ",\"track\":" << jsonString(state.track) << ",\"artist\":" << jsonString(state.artist)
            << ",\"message\":" << jsonString(state.message)
            << ",\"tracks\":" << state.tracks << ",\"canScan\":" << state.canScan

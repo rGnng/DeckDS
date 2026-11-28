@@ -41,6 +41,18 @@ if(PkgConfig_FOUND)
     pkg_check_modules(MICROHTTPD QUIET IMPORTED_TARGET libmicrohttpd>=0.9.71)
     if(MICROHTTPD_FOUND AND (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
         find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+        find_package(Git QUIET)
+        set(BUILD_COMMIT_HEADER "${CMAKE_CURRENT_BINARY_DIR}/build_commit.inc")
+        add_custom_target(DeckDSBuildCommit
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+                "-DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/.."
+                "-DOUTPUT_FILE=${BUILD_COMMIT_HEADER}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_commit.cmake"
+            BYPRODUCTS "${BUILD_COMMIT_HEADER}"
+            VERBATIM
+        )
+        add_dependencies(DeckDS DeckDSBuildCommit)
         set(WEB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/web")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             "${WEB_DIR}/index.html" "${WEB_DIR}/config.css" "${WEB_DIR}/config.js"

@@ -134,6 +134,7 @@ function show(state) {
   showText("artist", state.track ? state.artist || "" : "");
   showPlayback(state.playback);
   showText("ota-url", state.ota?.url || "Not set");
+  showText("build-commit", state.buildCommit || "Unknown");
   otaEdit.disabled = !state.ota;
 
   byId("review").hidden = !state.missing;

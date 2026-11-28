@@ -39,7 +39,11 @@ main.container { max-width: 960px; }
 .deck-logo { height: auto; min-width: 0; max-width: 48%; margin-left: -4px; }
 .config-page { padding: .5rem .625rem 1rem; }
 .config-header { padding-bottom: .5rem; margin-bottom: .5rem; }
-.config-header .deck-logo { width: 116px; }
+.config-brand { display: grid; align-items: center; min-width: 0; }
+.config-brand .deck-logo { width: 116px; max-width: 100%; }
+@media (min-width: 480px) {
+  .config-brand { grid-template-columns: auto minmax(0, 1fr); gap: .5rem; }
+}
 .config-grid, .config-player { display: grid; align-content: start; gap: .5rem; min-width: 0; }
 .config-grid { grid-template-columns: minmax(0, 1fr); align-items: start; }
 .config-page .card-body { padding: .75rem; }
