@@ -15,8 +15,9 @@
 enum class WebSetting { Theme, Brightness, Clock, Sfx, Lid, Accent, SfxVolume, SfxOutput, Count };
 using WebSettings = std::array<int, static_cast<size_t>(WebSetting::Count)>;
 
-inline constexpr size_t otaUrlLimit = 2048;
+inline constexpr size_t webUrlLimit = 2048;
 bool validOtaUrl(std::string_view url);
+bool validLibrarySyncUrl(std::string_view url);
 
 struct WebConfigState {
     struct Scan {
@@ -27,10 +28,11 @@ struct WebConfigState {
         std::string trackId;
         int64_t positionMs = 0, durationMs = 0;
         int volume = 0;
+        size_t queued = 0;
         bool available = false, playing = false, muted = false;
         bool canPlay = false, canPrevious = false, canNext = false;
     };
-    struct Ota {
+    struct UrlSetting {
         std::string url, error;
         uint64_t revision = 0;
     };
@@ -54,7 +56,7 @@ struct WebConfigState {
     WebSettings settings{};
     std::array<std::string_view, 4> accents{};
     Playback playback{};
-    Ota ota{};
+    UrlSetting ota{}, sync{};
     Wifi wifi{};
     Bluetooth bluetooth{};
 };
@@ -109,14 +111,14 @@ struct WebPlaybackCommand {
 
 struct WebConfigCommand {
     enum class Type {
-        QuickScan, FullScan, KeepMissing, RemoveMissing, Setting, Playback, OtaUrl,
+        QuickScan, FullScan, KeepMissing, RemoveMissing, Setting, Playback, OtaUrl, SyncUrl,
         WifiScan, WifiConnect, BluetoothRefreshPaired, BluetoothScan, BluetoothConnect, BluetoothForget
     } type;
     uint64_t review = 0;
     WebSetting setting = WebSetting::Theme;
     int value = 0;
     WebPlaybackCommand playback{};
-    std::string otaUrl{};
+    std::string url{};
     int theme = 0;
     std::string target{}, wifiPassword{};
 };

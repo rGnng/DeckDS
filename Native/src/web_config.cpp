@@ -2,29 +2,45 @@
 
 #include <algorithm>
 
-bool validOtaUrl(std::string_view url)
+namespace {
+std::string_view networkUrlScheme(std::string_view url)
 {
-    if (url.empty())
-        return true;
-    if (url.size() > otaUrlLimit || std::ranges::any_of(url, [](unsigned char ch) {
+    if (url.size() > webUrlLimit || std::ranges::any_of(url, [](unsigned char ch) {
             return ch <= ' ' || ch >= 127 || ch == '\\';
         }))
-        return false;
+        return {};
     const auto separator = url.find("://");
-    if (separator == std::string_view::npos)
-        return false;
+    if (separator == std::string_view::npos || separator == 0)
+        return {};
     const auto scheme = url.substr(0, separator);
-    const auto sameLetter = [](char lower, char actual) {
-        return lower == actual || lower - 'a' + 'A' == actual;
-    };
-    if (!std::ranges::equal(std::string_view("https"), scheme, sameLetter) &&
-        !std::ranges::equal(std::string_view("http"), scheme, sameLetter))
-        return false;
+    const auto letter = [](char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'); };
+    if (!letter(scheme.front()) || !std::ranges::all_of(scheme.substr(1), [&](char ch) {
+            return letter(ch) || (ch >= '0' && ch <= '9') || ch == '+' || ch == '-' || ch == '.';
+        }))
+        return {};
     const auto endpoint = url.substr(separator + 3);
     const auto authority = endpoint.substr(0, endpoint.find_first_of("/?#"));
     const auto userInfo = authority.rfind('@');
     const auto host = userInfo == std::string_view::npos ? authority : authority.substr(userInfo + 1);
-    return !host.empty() && host.front() != ':';
+    return !host.empty() && host.front() != ':' ? scheme : std::string_view{};
+}
+}
+
+bool validOtaUrl(std::string_view url)
+{
+    if (url.empty())
+        return true;
+    const auto scheme = networkUrlScheme(url);
+    const auto sameLetter = [](char lower, char actual) {
+        return lower == actual || lower - 'a' + 'A' == actual;
+    };
+    return std::ranges::equal(std::string_view("https"), scheme, sameLetter) ||
+           std::ranges::equal(std::string_view("http"), scheme, sameLetter);
+}
+
+bool validLibrarySyncUrl(std::string_view url)
+{
+    return url.empty() || !networkUrlScheme(url).empty();
 }
 
 #if defined(DECKDS_WEB_CONFIG)
@@ -51,6 +67,7 @@ constexpr unsigned short port = 8080;
 constexpr size_t requestLimit = 256;
 constexpr size_t commandLimit = 24;
 constexpr std::string_view otaUrlPath = "/api/ota/url";
+constexpr std::string_view syncUrlPath = "/api/library/sync-url";
 constexpr std::string_view passwordPath = "/api/access/password";
 constexpr std::string_view loginPath = "/api/access/login";
 constexpr auto sessionCookie = "deckds_session";
@@ -106,6 +123,12 @@ void writeScan(std::ostream& output, const std::optional<WebConfigState::Scan>& 
 
 void writeConnectivity(std::ostream& output, const WebConfigState& state);
 
+void writeUrl(std::ostream& output, const WebConfigState::UrlSetting& setting)
+{
+    output << "{\"url\":" << jsonString(setting.url) << ",\"revision\":" << setting.revision
+           << ",\"error\":" << jsonString(setting.error) << '}';
+}
+
 std::string json(const WebConfigState& state)
 {
     std::ostringstream output;
@@ -126,11 +149,13 @@ std::string json(const WebConfigState& state)
     const auto& playback = state.playback;
     output << "},\"playback\":{\"trackId\":" << jsonString(playback.trackId)
            << ",\"positionMs\":" << playback.positionMs << ",\"durationMs\":" << playback.durationMs
-           << ",\"volume\":" << playback.volume << ",\"available\":" << playback.available
+           << ",\"volume\":" << playback.volume << ",\"queued\":" << playback.queued << ",\"available\":" << playback.available
            << ",\"playing\":" << playback.playing << ",\"muted\":" << playback.muted
            << ",\"canPlay\":" << playback.canPlay << ",\"canPrevious\":" << playback.canPrevious
-           << ",\"canNext\":" << playback.canNext << "},\"ota\":{\"url\":" << jsonString(state.ota.url)
-           << ",\"revision\":" << state.ota.revision << ",\"error\":" << jsonString(state.ota.error) << '}';
+           << ",\"canNext\":" << playback.canNext << "},\"ota\":";
+    writeUrl(output, state.ota);
+    output << ",\"sync\":";
+    writeUrl(output, state.sync);
     writeConnectivity(output, state);
     output << '}';
     return std::move(output).str();
@@ -428,7 +453,7 @@ struct WebConfig::Server {
         auto& context = *static_cast<Request*>(*request);
         try {
             if (*size) {
-                const auto limit = url == otaUrlPath ? otaUrlLimit : requestLimit;
+                const auto limit = url == otaUrlPath || url == syncUrlPath ? webUrlLimit : requestLimit;
                 context.tooLarge = context.tooLarge || *size > limit - context.body.size();
                 if (!context.tooLarge)
                     context.body.append(data, *size);
@@ -529,11 +554,12 @@ struct WebConfig::Server {
                 return errorResponse(connection, 409, "That scan has already been reviewed.");
             commands.push_back({choice == "keep" ? Type::KeepMissing : Type::RemoveMissing, *review});
             activeReview = 0;
-        } else if (path == otaUrlPath) {
-            if (!validOtaUrl(body))
-                return errorResponse(connection, 400, "Enter a valid HTTP or HTTPS URL.");
-            WebConfigCommand command{Type::OtaUrl};
-            command.otaUrl = body;
+        } else if (path == otaUrlPath || path == syncUrlPath) {
+            const bool ota = path == otaUrlPath;
+            if (ota ? !validOtaUrl(body) : !validLibrarySyncUrl(body))
+                return errorResponse(connection, 400, ota ? "Enter a valid HTTP or HTTPS URL." : "Enter a URL with a server address.");
+            WebConfigCommand command{ota ? Type::OtaUrl : Type::SyncUrl};
+            command.url = body;
             commands.push_back(std::move(command));
         } else if (path.starts_with("/api/wifi/") || path.starts_with("/api/bluetooth/")) {
             return networkCommand(connection, path, body);

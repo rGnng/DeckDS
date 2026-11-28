@@ -63,6 +63,8 @@ Web Config starts with DeckDS and listens on all IPv4 interfaces at port 8080. O
 
 The browser shows the active library, scan progress, and Now Playing. The Now Playing controls operate the DeckDS player, including previous and next track, play and pause, seeking, volume, and mute. Scans and missing-file decisions share the same state with the SDL3 app. Theme, accent color, brightness, clock format, SFX, SFX volume, SFX output, and lid behavior apply live and use the preview’s existing settings file.
 
+Use **Music Library → Sync Config** to save the library sync server URL. Saving the field empty clears the URL.
+
 **Connectivity** scans for visible open and WPA Personal Wi-Fi networks and joins them through NetworkManager on Linux or CoreWLAN on macOS. Linux requires GIO at build time and a NetworkManager-managed adapter at runtime. **Bluetooth Audio** discovers, pairs, connects, and forgets devices through the same BlueZ controller as the Deck on Linux. The macOS preview uses demo Bluetooth devices.
 
 Under **Deck Settings → Updates**, use **Edit URL** to save or clear the device’s OTA URL. **Update** is disabled pending hardware support.

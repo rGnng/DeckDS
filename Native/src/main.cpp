@@ -445,6 +445,32 @@ bool savePreviewSettings(const std::filesystem::path& path, std::string_view set
     return false;
 }
 
+WebConfigState::UrlSetting loadWebUrl(const std::filesystem::path& path, bool (*valid)(std::string_view))
+{
+    WebConfigState::UrlSetting setting;
+    if (std::ifstream input(path, std::ios::binary); input) {
+        std::string url(webUrlLimit + 1, '\0');
+        input.read(url.data(), url.size());
+        url.resize(input.gcount());
+        if (!input.bad() && valid(url))
+            setting.url = std::move(url);
+    }
+    return setting;
+}
+
+void saveWebUrl(WebConfigState::UrlSetting& setting, const std::filesystem::path& path,
+                const std::string& url, std::string_view error)
+{
+    ++setting.revision;
+    setting.error.clear();
+    if (url == setting.url)
+        return;
+    if (!path.empty() && savePreviewSettings(path, url))
+        setting.url = url;
+    else
+        setting.error = error;
+}
+
 int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::filesystem::path musicPath)
 {
     const char* base = SDL_GetBasePath();
@@ -461,14 +487,9 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
         app.useLongMetadataFixture();
     const auto preferences = previewPreferences();
     const auto otaFile = preferences.empty() ? std::filesystem::path{} : preferences / "ota-url";
-    WebConfigState::Ota ota;
-    if (std::ifstream input(otaFile, std::ios::binary); input) {
-        std::string url(otaUrlLimit + 1, '\0');
-        input.read(url.data(), url.size());
-        url.resize(input.gcount());
-        if (!input.bad() && validOtaUrl(url))
-            ota.url = std::move(url);
-    }
+    const auto syncFile = preferences.empty() ? std::filesystem::path{} : preferences / "library-sync-url";
+    auto ota = loadWebUrl(otaFile, validOtaUrl);
+    auto librarySync = loadWebUrl(syncFile, validLibrarySyncUrl);
     const auto folderFile = preferences.empty() ? std::filesystem::path{} : preferences / "music-folder";
     const auto database = preferences.empty() ? std::filesystem::path{} : preferences / "library.sqlite";
     const bool explicitMusicPath = !musicPath.empty();
@@ -795,14 +816,11 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
                     app.applyWebPlayback(command.playback);
                     break;
                 case Type::OtaUrl:
-                    ++ota.revision;
-                    ota.error.clear();
-                    if (command.otaUrl != ota.url) {
-                        if (!otaFile.empty() && savePreviewSettings(otaFile, command.otaUrl))
-                            ota.url = command.otaUrl;
-                        else
-                            ota.error = "DeckDS could not save the OTA URL.";
-                    }
+                    saveWebUrl(ota, otaFile, command.url, "DeckDS could not save the OTA URL.");
+                    nextWebPublish = 0;
+                    break;
+                case Type::SyncUrl:
+                    saveWebUrl(librarySync, syncFile, command.url, "DeckDS could not save the library sync URL.");
                     nextWebPublish = 0;
                     break;
                 case Type::WifiScan:
@@ -940,6 +958,7 @@ int run(bool separate, bool kiosk, bool longMetadata, bool bluetoothDemo, std::f
             std::ranges::transform(accents, state.accents.begin(), &AccentPreset::name);
             state.playback = app.webPlayback();
             state.ota = ota;
+            state.sync = librarySync;
             state.wifi = webWifi.state();
             state.bluetooth = app.webBluetooth();
             if (const auto* track = app.player.track()) {

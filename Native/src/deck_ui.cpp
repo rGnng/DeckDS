@@ -4247,6 +4247,7 @@ WebConfigState::Playback DeckUi::webPlayback() const
         state.positionMs = std::llround(std::clamp(player.seconds, 0.0, static_cast<double>(duration)) * 1000);
     }
     state.volume = player.volume;
+    state.queued = player.queue.size();
     state.available = !poweredOff;
     state.playing = player.playing;
     state.muted = player.mute || player.volume == 0;

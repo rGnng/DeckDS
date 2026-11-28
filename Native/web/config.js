@@ -9,12 +9,7 @@ const next = byId("next");
 const seek = byId("seek");
 const volume = byId("volume");
 const mute = byId("mute");
-const otaEdit = byId("ota-edit");
-const otaDialog = byId("ota-dialog");
-const otaInput = byId("ota-input");
-const otaSave = byId("ota-save");
-const otaCancel = byId("ota-cancel");
-const otaError = byId("ota-error");
+const urlEditButtons = { ota: byId("ota-edit"), sync: byId("sync-edit") };
 const accent = byId("accent");
 const accessDialog = byId("web-password-dialog");
 const accessInput = byId("web-password-input");
@@ -129,11 +124,14 @@ function show(state) {
   tracks.textContent = `${numbers.format(state.tracks)} ${state.tracks === 1 ? "track" : "tracks"}`;
   tracks.hidden = Boolean(state.scan);
   showText("folder", state.folder || "Choose a music folder in DeckDS.");
-  showText("track", state.track || "No track selected");
+  const queued = state.playback?.queued || 0;
+  const idleTitle = queued ? `${numbers.format(queued)} ${queued === 1 ? "track" : "tracks"} queued` : "Queue empty";
+  showText("track", state.track || idleTitle);
   showText("artist", state.track ? state.artist || "" : "");
   showPlayback(state.playback);
   showText("ota-url", state.ota?.url || "Not set");
-  otaEdit.disabled = !state.ota;
+  for (const [key, button] of Object.entries(urlEditButtons))
+    button.disabled = !state[key];
   byId("scan").hidden = !state.scan;
   if (state.scan) {
     const { checked, total, full } = state.scan;
@@ -190,7 +188,7 @@ async function poll() {
     showPlayback(null);
     showConnectivity();
     showPasswordStatus();
-    otaEdit.disabled = true;
+    for (const button of Object.values(urlEditButtons)) button.disabled = true;
     [...scanButtons, ...reviewButtons, ...settings].forEach((field) => { field.disabled = true; });
   } finally {
     setTimeout(poll, 400);
@@ -469,60 +467,73 @@ byId("bluetooth-open").addEventListener("click", () => {
 byId("bluetooth-close").addEventListener("click", () => bluetoothDialog.close());
 bluetoothDialog.addEventListener("close", showConnectivity);
 
-otaEdit.addEventListener("click", () => {
-  otaInput.value = current.ota.url;
-  otaError.textContent = "";
-  otaDialog.showModal();
-});
-otaCancel.addEventListener("click", () => otaDialog.close());
-otaDialog.addEventListener("cancel", (event) => {
-  if (otaSave.disabled) event.preventDefault();
-});
+function bindUrlEditor(key, path, label) {
+  const dialog = byId(`${key}-dialog`);
+  const input = byId(`${key}-input`);
+  const save = byId(`${key}-save`);
+  const cancel = byId(`${key}-cancel`);
+  const feedback = byId(`${key}-error`);
+  const ota = key === "ota";
 
-byId("ota-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (otaSave.disabled) return;
-  otaError.textContent = "";
-  const raw = otaInput.value.trim();
-  let url = "";
-  if (raw) {
-    try {
-      const parsed = new URL(raw);
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") url = parsed.href;
-    } catch {
-      // The field error below also covers invalid URLs.
-    }
-    if (!url) {
-      otaError.textContent = "Enter a valid HTTP or HTTPS URL.";
-      return;
-    }
-  }
-  if (!current?.ota) {
-    otaError.textContent = "DeckDS is unavailable.";
-    return;
-  }
-  const { revision } = current.ota;
-  otaInput.disabled = otaSave.disabled = otaCancel.disabled = true;
-  try {
-    await request("/api/ota/url", url);
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const { ota } = await refresh();
-      if (ota.revision !== revision) {
-        if (ota.error) throw new Error(ota.error);
-        if (ota.url !== url) throw new Error("The saved OTA URL changed. Try again.");
-        otaDialog.close();
+  urlEditButtons[key].addEventListener("click", () => {
+    input.value = current[key].url;
+    feedback.textContent = "";
+    dialog.showModal();
+  });
+  cancel.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("cancel", (event) => {
+    if (save.disabled) event.preventDefault();
+  });
+
+  byId(`${key}-form`).addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (save.disabled) return;
+    feedback.textContent = "";
+    const raw = input.value.trim();
+    let url = "";
+    if (raw) {
+      try {
+        const parsed = new URL(raw);
+        const http = parsed.protocol === "http:" || parsed.protocol === "https:";
+        if (parsed.hostname && (!ota || http)) url = parsed.href;
+      } catch {
+        // The field error below also covers invalid URLs.
+      }
+      if (!url) {
+        feedback.textContent = ota ? "Enter a valid HTTP or HTTPS URL." : "Enter a URL with a server address.";
         return;
       }
-      await new Promise((resolve) => setTimeout(resolve, 150));
     }
-    throw new Error("DeckDS has not confirmed the save. Try again.");
-  } catch (error) {
-    otaError.textContent = error.message;
-  } finally {
-    otaInput.disabled = otaSave.disabled = otaCancel.disabled = false;
-    if (otaDialog.open) otaInput.focus();
-  }
-});
+    if (!current?.[key]) {
+      feedback.textContent = "DeckDS is unavailable.";
+      return;
+    }
+    const { revision } = current[key];
+    input.disabled = save.disabled = cancel.disabled = true;
+    try {
+      await request(path, url);
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const setting = (await refresh())[key];
+        if (setting.revision !== revision) {
+          if (setting.error) throw new Error(setting.error);
+          if (setting.url !== url) throw new Error(`The saved ${label} changed. Try again.`);
+          dialog.close();
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      throw new Error("DeckDS has not confirmed the save. Try again.");
+    } catch (error) {
+      feedback.textContent = error.message;
+    } finally {
+      input.disabled = save.disabled = cancel.disabled = false;
+      if (dialog.open) input.focus();
+    }
+  });
+}
+
+bindUrlEditor("ota", "/api/ota/url", "OTA URL");
+bindUrlEditor("sync", "/api/library/sync-url", "library sync URL");
 
 async function changePlayback(action, body = "", group = "transport") {
   if (!current?.playback?.available) return;

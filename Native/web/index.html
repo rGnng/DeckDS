@@ -25,7 +25,7 @@
           <div class="card-body">
             <h1 class="h6 mb-2" id="now-heading">Now Playing</h1>
             <div class="track-metadata">
-              <strong class="track-title text-truncate" id="track">No track selected</strong>
+              <strong class="track-title text-truncate" id="track">Queue empty</strong>
               <span class="track-artist small text-body-secondary text-truncate" id="artist"></span>
             </div>
             <div class="seek-row small font-monospace text-body-secondary">
@@ -81,7 +81,8 @@
             <div class="d-flex flex-wrap gap-1 scan-actions">
               <button id="quick" class="btn btn-sm btn-primary" type="button" disabled>Quick Scan</button>
               <button id="full" class="btn btn-sm btn-outline-secondary" type="button" disabled>Full Scan</button>
-              <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Sync</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" id="sync-edit"
+                      aria-haspopup="dialog" disabled>Sync Config</button>
             </div>
             <p id="library-message" class="library-feedback small text-body-secondary text-truncate mt-2 mb-0" role="status"></p>
             <section class="border-top pt-2 mt-2" id="review" aria-labelledby="review-heading" hidden>
@@ -191,6 +192,18 @@
       </section>
     </div>
   </main>
+  <dialog id="sync-dialog" aria-labelledby="sync-heading">
+    <form id="sync-form" class="p-3 p-sm-4">
+      <h2 class="h5 mb-3" id="sync-heading">Library Sync</h2>
+      <label class="form-label" for="sync-input">Sync URL</label>
+      <input class="form-control" id="sync-input" type="url" maxlength="2048" spellcheck="false" autofocus>
+      <p id="sync-error" class="feedback text-danger small mt-2 mb-0" role="alert"></p>
+      <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-outline-secondary" type="button" id="sync-cancel">Cancel</button>
+        <button class="btn btn-primary" type="submit" id="sync-save">Save</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="ota-dialog" aria-labelledby="ota-heading">
     <form id="ota-form" class="p-3 p-sm-4">
       <h2 class="h5 mb-3" id="ota-heading">Edit OTA URL</h2>
