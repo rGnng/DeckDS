@@ -140,7 +140,7 @@ function show(state) {
     const percent = total ? Math.min(99, Math.floor(100 * checked / total)) : 0;
     byId("percent").textContent = `${percent}%`;
     byId("bar").value = percent;
-    showText("library-message", `${full ? "Full Scan" : "Quick Scan"} · ${numbers.format(checked)} / ${total ? numbers.format(total) : "?"}`);
+    showText("library-message", `${full ? "Full Scan" : "Quick Scan"} (${numbers.format(checked)} / ${total ? numbers.format(total) : "?"})`);
   } else if (!libraryAction) {
     showText("library-message", libraryError || state.message || (state.canScan ? "Ready to scan" : "Scan unavailable"));
   }
@@ -266,7 +266,7 @@ function deviceRow(device, detail, actions) {
 
 function wifiRow(network) {
   const security = { open: "Open", personal: "WPA Personal", sae: "WPA3 Personal", other: "Unsupported security" };
-  const detail = network.connected ? "Connected" : `${security[network.security]} · ${network.strength}%`;
+  const detail = network.connected ? "Connected" : `${security[network.security]}, ${network.strength}%`;
   const actions = network.connected || network.security === "other" ? [] :
     [deviceButton("Join", network.name, () => showWifiJoin(network))];
   return deviceRow(network, detail, actions);

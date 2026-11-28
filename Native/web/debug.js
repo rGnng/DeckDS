@@ -29,7 +29,7 @@ function withUnit(value, unit) {
 function show(report) {
   const { app = {}, system = {}, audio = {}, video = {}, input = {}, library = {}, logs = [] } = report ?? {};
   if (report) {
-    const status = `Live · ${app.mode} · ${app.version}`;
+    const status = `Live / ${app.mode} / ${app.version}`;
     const heading = byId("debug-status");
     if (heading.textContent !== status) heading.textContent = heading.title = status;
   }
@@ -64,8 +64,8 @@ function show(report) {
   const windows = video.windows?.map((window) => `${window.panel}: ${window.renderer} / ${window.width} × ${window.height}`);
   fields("display-fields", [
     ["Video driver", video.driver || null],
-    ["Displays", displays?.join(" · ") || "None"],
-    ["Windows", windows?.join(" · ") || "None"],
+    ["Displays", displays?.join(", ") || "None"],
+    ["Windows", windows?.join(", ") || "None"],
     ["Deck displays", system.displaysOff ? "Off" : "On"],
     ["Touch devices", input.touchDevices],
     ["Controllers", input.gamepads?.join(", ") || "None"],
